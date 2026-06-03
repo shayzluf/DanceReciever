@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>DanceNow TV</title>
+  <link rel="stylesheet" href="styles.css">
+  <!-- Google Cast Application Framework (CAF) receiver SDK -->
+  <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+</head>
+<body>
+  <!-- The song plays here (this device is the authoritative clock the phone syncs to). -->
+  <audio id="song" preload="auto"></audio>
+
+  <!-- The coach figure is rendered here, from the pose timeline the phone streams, synced to the song. -->
+  <canvas id="coach"></canvas>
+
+  <!-- Ambient edge-glow that flashes on each judged moment. -->
+  <div id="glow" class="glow"></div>
+
+  <!-- Big rating word ("PERFECT  +250"), centered. -->
+  <div id="wordwrap"><div id="word"></div></div>
+
+  <!-- Per-player scoreboard. -->
+  <div id="scores" class="scores"></div>
+
+  <div id="hud" class="hud">
+    <div class="brand">DanceNow</div>
+    <div id="status">waiting for a phone to connect…</div>
+  </div>
+
+  <script src="receiver.js"></script>
+</body>
+</html>
