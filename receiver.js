@@ -36,7 +36,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun5-video';
+  var BUILD = 'jun5-video2';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -512,7 +512,11 @@
 
   function onFeedback(d) {
     var delay = (typeof d.at === 'number') ? (d.at - currentPlayhead()) : 0;
-    if (delay > 0.03 && delay < 3) {
+    // Only schedule a SMALL forward wait. A large positive delay means the phone's target playhead is
+    // well ahead of ours (clock skew / over-lead) — waiting it out would land the feedback seconds late,
+    // after the moment has passed, so present immediately instead. (Was `< 3`, which let skew stack up
+    // into multi-second lateness.) Negative delay (moment already passed) also presents immediately.
+    if (delay > 0.03 && delay < 0.45) {
       pendingFeedback.push(setTimeout(function () { presentFeedback(d); }, delay * 1000));
     } else {
       presentFeedback(d);
