@@ -34,6 +34,12 @@
   var scoresEl = document.getElementById('scores');
   var statusEl = document.getElementById('status');
 
+  // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
+  // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
+  var BUILD = 'jun5-video';
+  var buildEl = document.getElementById('build');
+  if (buildEl) buildEl.textContent = 'build ' + BUILD;
+
   var bones = [
     ['neck', 'nose'],
     ['neck', 'leftShoulder'], ['neck', 'rightShoulder'],
