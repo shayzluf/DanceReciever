@@ -11,6 +11,7 @@
  *
  * Namespace urn:x-cast:com.dancenow.sync
  *   phone → TV   { t:'load', audioUrl, mirrored, chunks }     then { t:'pose', frames:[{t,j}] } × chunks
+ *   phone → TV   { t:'loadEmbed', provider, videoID, mirrored }   // TV plays the platform video (its own sound)
  *   phone → TV   { t:'cmd', cmd:'play'|'pause'|'stop' }
  *   phone → TV   { t:'feedback', lane, rating, points, gold, at }   // at = target TV-playhead (sec)
  *   phone → TV   { t:'score', scores:[{lane,total,combo}] }
@@ -53,9 +54,25 @@
   var mockMode = false;
   var mockStart = 0;
 
+  // Embed mode: the TV shows the routine's platform video (YouTube/TikTok/Vimeo) WITH its own sound,
+  // instead of the drawn figure + mp3. The embed's currentTime becomes the authoritative playhead.
+  var embedMode = false;
+  var embedPlaying = false;
+  var embedTime = 0;
+  var embedPlayer = null;
+  var embedApi = null;
+  var embedEl = document.getElementById('embed');
+
   function now() { return performance.now() / 1000; }
   function setStatus(t) { if (statusEl) statusEl.textContent = t; }
   function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+  // The authoritative playhead the phone syncs to: embed time in embed mode, else the song's time.
+  function currentPlayhead() {
+    if (embedMode) return embedApi ? embedApi.time() : embedTime;
+    if (mockMode) { var dur = (poseFrames.length ? poseFrames[poseFrames.length - 1].t : 1) || 1; return (now() - mockStart) % dur; }
+    return audio.currentTime || 0;
+  }
 
   function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
   window.addEventListener('resize', resize);
@@ -235,15 +252,20 @@
   function frame() {
     requestAnimationFrame(frame);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (!loaded || !poseFrames.length) return;
-    var dur = poseFrames[poseFrames.length - 1].t || 1;
-    var t = mockMode ? ((now() - mockStart) % dur) : (audio.currentTime || 0);
-    var f = poseAt(t);
-    if (f) drawFigure(f.j);
 
-    if (!mockMode && now() - lastBeacon > 0.05) {
+    // Draw the figure only in figure mode (embed mode shows the platform video instead).
+    if (!embedMode && (mockMode || loaded) && poseFrames.length) {
+      var dur = poseFrames[poseFrames.length - 1].t || 1;
+      var t = mockMode ? ((now() - mockStart) % dur) : (audio.currentTime || 0);
+      var f = poseAt(t);
+      if (f) drawFigure(f.j);
+    }
+
+    // Beacon the playhead so the phone can score (both embed and figure modes; never in mock).
+    if (!mockMode && (embedMode || loaded) && now() - lastBeacon > 0.05) {
       lastBeacon = now();
-      broadcast({ t: 'ph', rt: t, ts: now(), st: audio.paused ? 'paused' : 'playing', seq: seq++ });
+      var playing = embedMode ? embedPlaying : !audio.paused;
+      broadcast({ t: 'ph', rt: currentPlayhead(), ts: now(), st: playing ? 'playing' : 'paused', seq: seq++ });
     }
   }
 
@@ -270,6 +292,94 @@
     setStatus('loading routine…');
   }
 
+  // Reference-don't-host on the TV: load the routine's platform video (real video + original sound).
+  function onLoadEmbed(d) {
+    clearPendingFeedback();
+    loaded = false; mockMode = false;
+    embedMode = true; embedPlaying = false; embedTime = 0; embedApi = null; embedPlayer = null;
+    canvas.style.display = 'none';
+    if (!embedEl) embedEl = document.getElementById('embed');
+    embedEl.innerHTML = '';
+    embedEl.style.display = 'block';
+    if (actx && actx.state === 'suspended') actx.resume();
+    setStatus('loading video…');
+    if (d.provider === 'youtube') buildYouTube(d.videoID);
+    else if (d.provider === 'vimeo') buildVimeo(d.videoID);
+    else if (d.provider === 'tiktok') buildTikTok(d.videoID);
+    else setStatus('unknown video provider');
+  }
+
+  function buildYouTube(id) {
+    var div = document.createElement('div');
+    div.id = 'ytplayer';
+    div.style.cssText = 'position:absolute;inset:0;width:100%;height:100%';
+    embedEl.appendChild(div);
+    window.onYouTubeIframeAPIReady = function () {
+      embedPlayer = new YT.Player('ytplayer', {
+        width: '100%', height: '100%', videoId: id,
+        playerVars: { autoplay: 1, controls: 0, playsinline: 1, rel: 0, fs: 0, modestbranding: 1 },
+        events: {
+          onReady: function (e) { try { e.target.playVideo(); } catch (x) {} embedPlaying = true; setStatus(''); },
+          onStateChange: function (e) { embedPlaying = (e.data === 1); if (e.data === 0) broadcast({ t: 'ended' }); }
+        }
+      });
+    };
+    if (window.YT && window.YT.Player) window.onYouTubeIframeAPIReady();
+    else { var tag = document.createElement('script'); tag.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(tag); }
+    embedApi = {
+      time: function () { return (embedPlayer && embedPlayer.getCurrentTime) ? embedPlayer.getCurrentTime() : 0; },
+      play: function () { if (embedPlayer && embedPlayer.playVideo) embedPlayer.playVideo(); },
+      pause: function () { if (embedPlayer && embedPlayer.pauseVideo) embedPlayer.pauseVideo(); },
+      seek0: function () { if (embedPlayer && embedPlayer.seekTo) embedPlayer.seekTo(0, true); }
+    };
+  }
+
+  function buildVimeo(id) {
+    var ifr = document.createElement('iframe');
+    ifr.src = 'https://player.vimeo.com/video/' + id + '?autoplay=1&controls=0&playsinline=1&title=0&byline=0&portrait=0';
+    ifr.allow = 'autoplay; fullscreen';
+    ifr.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0';
+    embedEl.appendChild(ifr);
+    embedApi = {
+      time: function () { return embedTime; },
+      play: function () { if (embedPlayer) embedPlayer.play().catch(function () {}); },
+      pause: function () { if (embedPlayer) embedPlayer.pause(); },
+      seek0: function () { if (embedPlayer) embedPlayer.setCurrentTime(0); }
+    };
+    function init() {
+      embedPlayer = new Vimeo.Player(ifr);
+      embedPlayer.on('timeupdate', function (dd) { embedTime = dd.seconds; embedPlaying = true; });
+      embedPlayer.on('play', function () { embedPlaying = true; });
+      embedPlayer.on('pause', function () { embedPlaying = false; });
+      embedPlayer.on('ended', function () { broadcast({ t: 'ended' }); });
+      embedPlayer.ready().then(function () { embedPlayer.play().catch(function () {}); setStatus(''); });
+    }
+    if (window.Vimeo && window.Vimeo.Player) init();
+    else { var tag = document.createElement('script'); tag.src = 'https://player.vimeo.com/api/player.js'; tag.onload = init; document.head.appendChild(tag); }
+  }
+
+  function buildTikTok(id) {
+    var ifr = document.createElement('iframe');
+    ifr.id = 'ttplayer';
+    ifr.src = 'https://www.tiktok.com/player/v1/' + id + '?autoplay=1&controls=0&music_info=0&description=0&rel=0';
+    ifr.allow = 'autoplay';
+    ifr.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0';
+    embedEl.appendChild(ifr);
+    function post(m) { m['x-tiktok-player'] = true; if (ifr.contentWindow) ifr.contentWindow.postMessage(m, '*'); }
+    window.addEventListener('message', function (ev) {
+      var dd = ev.data; if (!dd || !dd['x-tiktok-player']) return;
+      if (dd.type === 'onCurrentTime' && dd.value) { embedTime = dd.value.currentTime; embedPlaying = true; }
+      if (dd.type === 'onStateChange') { embedPlaying = (dd.value === 1); if (dd.value === 0) broadcast({ t: 'ended' }); }
+    });
+    ifr.addEventListener('load', function () { post({ type: 'play' }); setStatus(''); });
+    embedApi = {
+      time: function () { return embedTime; },
+      play: function () { post({ type: 'play' }); },
+      pause: function () { post({ type: 'pause' }); },
+      seek0: function () { post({ type: 'seekTo', value: 0 }); }
+    };
+  }
+
   function onPose(d) {
     if (d.frames && d.frames.length) {
       for (var i = 0; i < d.frames.length; i++) poseFrames.push(d.frames[i]);
@@ -286,14 +396,22 @@
   function onCmd(d) {
     if (d.cmd === 'play') {
       if (actx && actx.state === 'suspended') actx.resume();
-      audio.play().catch(function () {});
+      if (embedMode) { if (embedApi) embedApi.play(); } else { audio.play().catch(function () {}); }
       document.body.classList.add('playing');
     } else if (d.cmd === 'pause') {
-      audio.pause();
+      if (embedMode) { if (embedApi) embedApi.pause(); } else { audio.pause(); }
     } else if (d.cmd === 'stop') {
       clearPendingFeedback();
-      audio.pause();
-      audio.currentTime = 0;
+      if (embedMode) {
+        if (embedApi) { embedApi.pause(); embedApi.seek0(); }
+        embedEl.style.display = 'none';
+        embedEl.innerHTML = '';
+        embedMode = false; embedApi = null; embedPlayer = null;
+        canvas.style.display = '';
+      } else {
+        audio.pause();
+        audio.currentTime = 0;
+      }
       document.body.classList.remove('playing');
       setStatus('ready');
     }
@@ -313,12 +431,12 @@
     if (d.gold && d.rating !== 'miss') { say(pick(['Yeah!', 'Star move!', 'Amazing!'])); duck(0.3, 0.7); }
     else if (d.rating === 'perfect') { say(pick(['Perfect!', 'Nailed it!', 'Yeah!'])); duck(0.3, 0.7); }
     else { duck(0.65, 0.18); }
-    pulseGlow(d.rating, d.gold);
-    showWord(d.rating, d.gold, d.points);
+    // Over an embedded player we must not draw overlays (platform ToS) → audio-only feedback there.
+    if (!embedMode) { pulseGlow(d.rating, d.gold); showWord(d.rating, d.gold, d.points); }
   }
 
   function onFeedback(d) {
-    var delay = (typeof d.at === 'number') ? (d.at - (audio.currentTime || 0)) : 0;
+    var delay = (typeof d.at === 'number') ? (d.at - currentPlayhead()) : 0;
     if (delay > 0.03 && delay < 3) {
       pendingFeedback.push(setTimeout(function () { presentFeedback(d); }, delay * 1000));
     } else {
@@ -333,6 +451,7 @@
       switch (d.t) {
         case 'ping': try { context.sendCustomMessage(NS, event.senderId, { t: 'pong', id: d.id, cs: d.cs, rs: now() }); } catch (e) {} break;
         case 'load': onLoad(d); break;
+        case 'loadEmbed': onLoadEmbed(d); break;
         case 'pose': onPose(d); break;
         case 'cmd': onCmd(d); break;
         case 'feedback': onFeedback(d); break;
