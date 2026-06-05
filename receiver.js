@@ -12,7 +12,7 @@
  * Namespace urn:x-cast:com.dancenow.sync
  *   phone → TV   { t:'load', audioUrl, mirrored, chunks }     then { t:'pose', frames:[{t,j}] } × chunks
  *   phone → TV   { t:'cmd', cmd:'play'|'pause'|'stop' }
- *   phone → TV   { t:'feedback', lane, rating, points, gold }
+ *   phone → TV   { t:'feedback', lane, rating, points, gold, at }   // at = target TV-playhead (sec)
  *   phone → TV   { t:'score', scores:[{lane,total,combo}] }
  *   phone → TV   { t:'ping', id, cs }
  *   TV → phone   { t:'ph', rt, ts, st, seq }  ·  { t:'pong', id, cs, rs }  ·  { t:'ready' }
@@ -258,6 +258,7 @@
   }
 
   function onLoad(d) {
+    clearPendingFeedback();
     poseFrames = [];
     receivedChunks = 0;
     expectedChunks = d.chunks || 0;
@@ -290,6 +291,7 @@
     } else if (d.cmd === 'pause') {
       audio.pause();
     } else if (d.cmd === 'stop') {
+      clearPendingFeedback();
       audio.pause();
       audio.currentTime = 0;
       document.body.classList.remove('playing');
@@ -297,13 +299,31 @@
     }
   }
 
-  function onFeedback(d) {
+  // Feedback is scheduled against the TV playhead (d.at): present it when the song reaches that moment,
+  // so the tone/word land musically rather than whenever the packet arrived. If d.at is already in the
+  // past (pipeline slower than the lead) or absent (mock), present immediately.
+  var pendingFeedback = [];
+  function clearPendingFeedback() {
+    for (var i = 0; i < pendingFeedback.length; i++) clearTimeout(pendingFeedback[i]);
+    pendingFeedback = [];
+  }
+
+  function presentFeedback(d) {
     toneTier(d.rating, d.gold);
     if (d.gold && d.rating !== 'miss') { say(pick(['Yeah!', 'Star move!', 'Amazing!'])); duck(0.3, 0.7); }
     else if (d.rating === 'perfect') { say(pick(['Perfect!', 'Nailed it!', 'Yeah!'])); duck(0.3, 0.7); }
     else { duck(0.65, 0.18); }
     pulseGlow(d.rating, d.gold);
     showWord(d.rating, d.gold, d.points);
+  }
+
+  function onFeedback(d) {
+    var delay = (typeof d.at === 'number') ? (d.at - (audio.currentTime || 0)) : 0;
+    if (delay > 0.03 && delay < 3) {
+      pendingFeedback.push(setTimeout(function () { presentFeedback(d); }, delay * 1000));
+    } else {
+      presentFeedback(d);
+    }
   }
 
   if (context) {
