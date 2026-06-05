@@ -12,6 +12,7 @@
  * Namespace urn:x-cast:com.dancenow.sync
  *   phone → TV   { t:'load', audioUrl, mirrored, chunks }     then { t:'pose', frames:[{t,j}] } × chunks
  *   phone → TV   { t:'loadEmbed', provider, videoID, mirrored }   // TV plays the platform video (its own sound)
+ *   phone → TV   { t:'loadVideo', videoUrl, audioUrl, mirrored }  // TV plays the user's silent clip + catalog mp3
  *   phone → TV   { t:'cmd', cmd:'play'|'pause'|'stop' }
  *   phone → TV   { t:'feedback', lane, rating, points, gold, at }   // at = target TV-playhead (sec)
  *   phone → TV   { t:'score', scores:[{lane,total,combo}] }
@@ -63,13 +64,22 @@
   var embedApi = null;
   var embedEl = document.getElementById('embed');
 
+  // Video mode (local catalog routine): the TV shows the user's *silent* recorded clip (staged on R2) as
+  // the coach, with the licensed catalog mp3 (#song) synced to it. The video is the master clock. Because
+  // it's our own content (not a platform embed), feedback overlays ARE allowed here (unlike embed mode).
+  var videoMode = false;
+  var videoPlaying = false;
+  var videoEl = document.getElementById('castvideo');
+
   function now() { return performance.now() / 1000; }
   function setStatus(t) { if (statusEl) statusEl.textContent = t; }
   function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
-  // The authoritative playhead the phone syncs to: embed time in embed mode, else the song's time.
+  // The authoritative playhead the phone syncs to: embed time (embed), the silent clip's time (video),
+  // else the song's time.
   function currentPlayhead() {
     if (embedMode) return embedApi ? embedApi.time() : embedTime;
+    if (videoMode) return videoEl ? (videoEl.currentTime || 0) : 0;
     if (mockMode) { var dur = (poseFrames.length ? poseFrames[poseFrames.length - 1].t : 1) || 1; return (now() - mockStart) % dur; }
     return audio.currentTime || 0;
   }
@@ -253,18 +263,25 @@
     requestAnimationFrame(frame);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Draw the figure only in figure mode (embed mode shows the platform video instead).
-    if (!embedMode && (mockMode || loaded) && poseFrames.length) {
+    // Draw the figure only in figure mode (embed + video modes show real footage instead).
+    if (!embedMode && !videoMode && (mockMode || loaded) && poseFrames.length) {
       var dur = poseFrames[poseFrames.length - 1].t || 1;
       var t = mockMode ? ((now() - mockStart) % dur) : (audio.currentTime || 0);
       var f = poseAt(t);
       if (f) drawFigure(f.j);
     }
 
-    // Beacon the playhead so the phone can score (both embed and figure modes; never in mock).
-    if (!mockMode && (embedMode || loaded) && now() - lastBeacon > 0.05) {
+    // Video mode: the silent clip is the master clock — keep the catalog mp3 locked to it.
+    if (videoMode && videoEl && !videoEl.paused && audio && !audio.paused) {
+      if (Math.abs((audio.currentTime || 0) - (videoEl.currentTime || 0)) > 0.25) {
+        try { audio.currentTime = videoEl.currentTime; } catch (e) { /* not seekable yet */ }
+      }
+    }
+
+    // Beacon the playhead so the phone can score (figure, embed, and video modes; never in mock).
+    if (!mockMode && (embedMode || videoMode || loaded) && now() - lastBeacon > 0.05) {
       lastBeacon = now();
-      var playing = embedMode ? embedPlaying : !audio.paused;
+      var playing = embedMode ? embedPlaying : videoMode ? !videoEl.paused : !audio.paused;
       broadcast({ t: 'ph', rt: currentPlayhead(), ts: now(), st: playing ? 'playing' : 'paused', seq: seq++ });
     }
   }
@@ -279,8 +296,24 @@
     }
   }
 
+  // Tear down video mode (when switching to a figure/embed round, or on stop): pause + drop the clip and
+  // restore the figure canvas at the call site.
+  function exitVideoMode() {
+    if (videoEl) {
+      try { videoEl.pause(); } catch (e) { /* ignore */ }
+      videoEl.onended = null;
+      videoEl.style.display = 'none';
+      videoEl.removeAttribute('src');
+      try { videoEl.load(); } catch (e) { /* ignore */ }
+    }
+    videoMode = false;
+    videoPlaying = false;
+  }
+
   function onLoad(d) {
     clearPendingFeedback();
+    exitVideoMode();
+    canvas.style.display = '';
     poseFrames = [];
     receivedChunks = 0;
     expectedChunks = d.chunks || 0;
@@ -292,9 +325,37 @@
     setStatus('loading routine…');
   }
 
+  // Local catalog routine on the TV: play the user's *silent* recorded clip (staged on R2) as the coach,
+  // with the licensed catalog mp3 synced to it. Video is the master clock; play/pause/stop drive both.
+  // Our own content → feedback overlays are allowed (presentFeedback only suppresses them for embeds).
+  function onLoadVideo(d) {
+    clearPendingFeedback();
+    poseFrames = []; loaded = false; mockMode = false;
+    embedMode = false; embedPlaying = false; embedApi = null; embedPlayer = null;
+    if (embedEl) { embedEl.style.display = 'none'; embedEl.innerHTML = ''; }
+    mirrored = d.mirrored !== false;
+    if (!videoEl) videoEl = document.getElementById('castvideo');
+    canvas.style.display = 'none';
+    videoMode = true; videoPlaying = false;
+    videoEl.style.display = 'block';
+    videoEl.style.transform = mirrored ? 'scaleX(-1)' : 'none';
+    videoEl.muted = true;
+    videoEl.onended = function () {
+      videoPlaying = false;
+      document.body.classList.remove('playing');
+      broadcast({ t: 'ph', rt: videoEl.duration || 0, ts: now(), st: 'ended', seq: seq++ });
+    };
+    if (d.audioUrl) { audio.src = d.audioUrl; audio.load(); } else { audio.removeAttribute('src'); }
+    videoEl.src = d.videoUrl || '';
+    videoEl.load();
+    if (actx && actx.state === 'suspended') actx.resume();
+    setStatus('loading video…');
+  }
+
   // Reference-don't-host on the TV: load the routine's platform video (real video + original sound).
   function onLoadEmbed(d) {
     clearPendingFeedback();
+    exitVideoMode();
     loaded = false; mockMode = false;
     embedMode = true; embedPlaying = false; embedTime = 0; embedApi = null; embedPlayer = null;
     canvas.style.display = 'none';
@@ -396,10 +457,14 @@
   function onCmd(d) {
     if (d.cmd === 'play') {
       if (actx && actx.state === 'suspended') actx.resume();
-      if (embedMode) { if (embedApi) embedApi.play(); } else { audio.play().catch(function () {}); }
+      if (embedMode) { if (embedApi) embedApi.play(); }
+      else if (videoMode) { videoEl.play().catch(function () {}); audio.play().catch(function () {}); videoPlaying = true; }
+      else { audio.play().catch(function () {}); }
       document.body.classList.add('playing');
     } else if (d.cmd === 'pause') {
-      if (embedMode) { if (embedApi) embedApi.pause(); } else { audio.pause(); }
+      if (embedMode) { if (embedApi) embedApi.pause(); }
+      else if (videoMode) { videoEl.pause(); audio.pause(); videoPlaying = false; }
+      else { audio.pause(); }
     } else if (d.cmd === 'stop') {
       clearPendingFeedback();
       if (embedMode) {
@@ -407,6 +472,10 @@
         embedEl.style.display = 'none';
         embedEl.innerHTML = '';
         embedMode = false; embedApi = null; embedPlayer = null;
+        canvas.style.display = '';
+      } else if (videoMode) {
+        audio.pause(); try { audio.currentTime = 0; } catch (e) { /* ignore */ }
+        exitVideoMode();
         canvas.style.display = '';
       } else {
         audio.pause();
@@ -452,6 +521,7 @@
         case 'ping': try { context.sendCustomMessage(NS, event.senderId, { t: 'pong', id: d.id, cs: d.cs, rs: now() }); } catch (e) {} break;
         case 'load': onLoad(d); break;
         case 'loadEmbed': onLoadEmbed(d); break;
+        case 'loadVideo': onLoadVideo(d); break;
         case 'pose': onPose(d); break;
         case 'cmd': onCmd(d); break;
         case 'feedback': onFeedback(d); break;

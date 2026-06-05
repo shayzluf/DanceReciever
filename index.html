@@ -18,6 +18,12 @@
   <!-- Embed mode: the routine's platform video (YouTube/TikTok/Vimeo) plays here with its own sound. -->
   <div id="embed" style="position:fixed; inset:0; width:100%; height:100%; border:0; display:none; background:#000;"></div>
 
+  <!-- Video mode (local catalog routine): the user's *silent* recorded clip (staged ephemerally on R2)
+       plays here as the coach; the licensed catalog mp3 plays from #song, synced. Our own content, so
+       feedback overlays (glow/word/scores, which sit above this at higher z-index) ARE allowed. -->
+  <video id="castvideo" muted playsinline webkit-playsinline
+         style="position:fixed; inset:0; width:100%; height:100%; object-fit:contain; display:none; background:#000; z-index:1;"></video>
+
   <!-- Ambient edge-glow that flashes on each judged moment. -->
   <div id="glow" class="glow"></div>
 
