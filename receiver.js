@@ -36,7 +36,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun5-video4';
+  var BUILD = 'jun5-video5';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -502,19 +502,35 @@
     }
   }
 
+  // Start a video-mode round robustly: WAIT until the clip can actually play. On a cold load the clip
+  // isn't ready when the play command arrives — the old single play() attempt rejected and only the
+  // music started (first "Dance" = no video; the warm second try worked). Gate on canplay, then play the
+  // video and start the music synced to it. Falls back to audio-only so the round is never silent.
+  function startVideoModePlayback() {
+    if (!videoEl) return;
+    audio.pause();
+    var done = false;
+    function begin() {
+      if (done) return; done = true;
+      videoEl.play().then(function () {
+        try { audio.currentTime = videoEl.currentTime || 0; } catch (e) {}
+        audio.play().catch(function () {});
+      }).catch(function () {
+        audio.play().catch(function () {}); // last resort: don't leave the round silent
+      });
+    }
+    if (videoEl.readyState >= 3) begin();               // HAVE_FUTURE_DATA → ready now
+    else {
+      videoEl.addEventListener('canplay', begin, { once: true });
+      setTimeout(begin, 2500);                          // fallback if canplay never fires
+    }
+  }
+
   function onCmd(d) {
     if (d.cmd === 'play') {
       resumeAudio();
       if (embedMode) { if (embedApi) embedApi.play(); }
-      else if (videoMode) {
-        // Start the music only once the video actually begins, synced to it — otherwise the (lighter)
-        // audio buffers first and plays ahead of the still-loading video.
-        audio.pause();
-        var startMusic = function () { try { audio.currentTime = videoEl.currentTime || 0; } catch (e) {} audio.play().catch(function () {}); };
-        var pv = videoEl.play();
-        if (pv && pv.then) pv.then(startMusic).catch(startMusic); else startMusic();
-        videoPlaying = true;
-      }
+      else if (videoMode) { startVideoModePlayback(); videoPlaying = true; }
       else { audio.play().catch(function () {}); }
       document.body.classList.add('playing');
     } else if (d.cmd === 'pause') {
