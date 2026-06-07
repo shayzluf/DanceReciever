@@ -3,7 +3,7 @@
  *
  * The TV is the big shared screen: it plays the song (and is the authoritative clock the phone syncs
  * to), renders the COACH figure from a pose timeline the phone streams, and shows all feedback (edge-
- * glow + a rating word + tone + spoken callout + scoreboard). The phone is the camera/scorer; it never
+ * glow + a rating word + tone + scoreboard). The phone is the camera/scorer; it never
  * overlays anything on a player here, which is the whole point of the second-screen design.
  *
  * Browser preview (NO Chromecast): open  receiver/index.html?mock=1  in Chrome to see the coach
@@ -36,7 +36,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun5-video2';
+  var BUILD = 'jun5-video3';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -94,7 +94,7 @@
   window.addEventListener('resize', resize);
   resize();
 
-  // ---- Audio: tier tones (WebAudio) + spoken callouts + music ducking ----
+  // ---- Audio: tier tones (WebAudio) + gentle music ducking (no TTS — it steals focus on the TV) ----
   var AudioCtx = window.AudioContext || window.webkitAudioContext;
   var actx = AudioCtx ? new AudioCtx() : null;
 
@@ -128,24 +128,30 @@
     else tone(196, 0.16, 0.4);
   }
 
-  function say(text) {
-    if (!window.speechSynthesis) return;
-    try {
-      var u = new SpeechSynthesisUtterance(text);
-      u.rate = 1.05;
-      u.pitch = 1.15;
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(u);
-    } catch (e) { /* ignore */ }
-  }
+  // NOTE: no system TTS (speechSynthesis) on the TV. On Cast devices the speech engine takes audio
+  // focus and ducks/cuts the music element — which removed the background track on every callout. The
+  // WebAudio tones are the audio feedback; they mix with the music without stealing focus.
 
+  // Smooth, gentle music ducking via short volume ramps (no hard jump → no click/pop). Always restores
+  // to full, and the latest duck wins, so rapid feedback can never leave the music stuck quiet.
   var duckToken = 0;
+  var duckRamp = null;
+  function rampMusic(target, ms) {
+    if (!audio) return;
+    if (duckRamp) { clearInterval(duckRamp); duckRamp = null; }
+    var from = audio.volume, t0 = now(), dur = Math.max(0.02, ms / 1000);
+    duckRamp = setInterval(function () {
+      var k = Math.min(1, (now() - t0) / dur);
+      audio.volume = Math.max(0, Math.min(1, from + (target - from) * k));
+      if (k >= 1) { clearInterval(duckRamp); duckRamp = null; }
+    }, 16);
+  }
   function duck(level, holdSeconds) {
     if (!audio) return;
-    audio.volume = level;
+    rampMusic(level, 70);
     duckToken += 1;
     var token = duckToken;
-    setTimeout(function () { if (token === duckToken) audio.volume = 1.0; }, holdSeconds * 1000);
+    setTimeout(function () { if (token === duckToken) rampMusic(1.0, 220); }, holdSeconds * 1000);
   }
 
   // ---- Feedback visuals ----
@@ -503,9 +509,10 @@
 
   function presentFeedback(d) {
     toneTier(d.rating, d.gold);
-    if (d.gold && d.rating !== 'miss') { say(pick(['Yeah!', 'Star move!', 'Amazing!'])); duck(0.3, 0.7); }
-    else if (d.rating === 'perfect') { say(pick(['Perfect!', 'Nailed it!', 'Yeah!'])); duck(0.3, 0.7); }
-    else { duck(0.65, 0.18); }
+    // Gentle, brief duck only on the prominent moments so the tone pops — the music stays clearly audible
+    // and never disappears. good/ok/miss don't duck at all (their tone cuts through on its own).
+    if (d.gold && d.rating !== 'miss') duck(0.7, 0.4);
+    else if (d.rating === 'perfect') duck(0.8, 0.25);
     // Over an embedded player we must not draw overlays (platform ToS) → audio-only feedback there.
     if (!embedMode) { pulseGlow(d.rating, d.gold); showWord(d.rating, d.gold, d.points); }
   }
