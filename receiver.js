@@ -36,7 +36,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun5-video3';
+  var BUILD = 'jun5-video4';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -94,9 +94,36 @@
   window.addEventListener('resize', resize);
   resize();
 
-  // ---- Audio: tier tones (WebAudio) + gentle music ducking (no TTS — it steals focus on the TV) ----
+  // ---- Audio: ONE WebAudio graph for music + tone feedback ----
+  // The music (HTML <audio>) is routed THROUGH the AudioContext (createMediaElementSource → musicGain →
+  // destination) so it shares a SINGLE output stream with the WebAudio feedback tones. On Cast devices a
+  // bare <audio> element and WebAudio are two separate streams, and the tone steals the output — cutting
+  // the music on every signal. Routing the music into the same graph fixes that. Requires CORS on the
+  // audio origin (#song has crossorigin="anonymous"); a no-CORS cross-origin source can't be routed.
   var AudioCtx = window.AudioContext || window.webkitAudioContext;
   var actx = AudioCtx ? new AudioCtx() : null;
+  var musicGain = null;
+  var musicGraphTried = false;
+
+  function ensureMusicGraph() {
+    if (musicGraphTried || !actx || !audio) return;
+    musicGraphTried = true;
+    try {
+      var src = actx.createMediaElementSource(audio);
+      musicGain = actx.createGain();
+      musicGain.gain.value = 1;
+      src.connect(musicGain);
+      musicGain.connect(actx.destination);
+    } catch (e) {
+      musicGain = null; // already sourced / unsupported → volume-ducking fallback
+    }
+  }
+
+  // Resume the context AND wire the music into it (must run from a play, ideally after a gesture).
+  function resumeAudio() {
+    if (actx && actx.state === 'suspended') actx.resume();
+    ensureMusicGraph();
+  }
 
   function tone(freq, dur, vol) {
     if (!actx) return;
@@ -137,9 +164,19 @@
   var duckToken = 0;
   var duckRamp = null;
   function rampMusic(target, ms) {
+    var dur = Math.max(0.02, ms / 1000);
+    // Preferred: ramp the WebAudio musicGain (sample-accurate, no click).
+    if (musicGain && actx) {
+      var t = actx.currentTime, cur = musicGain.gain.value;
+      musicGain.gain.cancelScheduledValues(t);
+      musicGain.gain.setValueAtTime(cur, t);
+      musicGain.gain.linearRampToValueAtTime(target, t + dur);
+      return;
+    }
+    // Fallback (graph not built): ramp the element volume.
     if (!audio) return;
     if (duckRamp) { clearInterval(duckRamp); duckRamp = null; }
-    var from = audio.volume, t0 = now(), dur = Math.max(0.02, ms / 1000);
+    var from = audio.volume, t0 = now();
     duckRamp = setInterval(function () {
       var k = Math.min(1, (now() - t0) / dur);
       audio.volume = Math.max(0, Math.min(1, from + (target - from) * k));
@@ -147,7 +184,6 @@
     }, 16);
   }
   function duck(level, holdSeconds) {
-    if (!audio) return;
     rampMusic(level, 70);
     duckToken += 1;
     var token = duckToken;
@@ -333,7 +369,7 @@
     loaded = false;
     mockMode = false;
     if (d.audioUrl) { audio.src = d.audioUrl; audio.load(); }
-    if (actx && actx.state === 'suspended') actx.resume();
+    resumeAudio();
     setStatus('loading routine…');
   }
 
@@ -360,7 +396,7 @@
     if (d.audioUrl) { audio.src = d.audioUrl; audio.load(); } else { audio.removeAttribute('src'); }
     videoEl.src = d.videoUrl || '';
     videoEl.load();
-    if (actx && actx.state === 'suspended') actx.resume();
+    resumeAudio();
     setStatus('loading video…');
   }
 
@@ -374,7 +410,7 @@
     if (!embedEl) embedEl = document.getElementById('embed');
     embedEl.innerHTML = '';
     embedEl.style.display = 'block';
-    if (actx && actx.state === 'suspended') actx.resume();
+    resumeAudio();
     setStatus('loading video…');
     if (d.provider === 'youtube') buildYouTube(d.videoID);
     else if (d.provider === 'vimeo') buildVimeo(d.videoID);
@@ -468,9 +504,17 @@
 
   function onCmd(d) {
     if (d.cmd === 'play') {
-      if (actx && actx.state === 'suspended') actx.resume();
+      resumeAudio();
       if (embedMode) { if (embedApi) embedApi.play(); }
-      else if (videoMode) { videoEl.play().catch(function () {}); audio.play().catch(function () {}); videoPlaying = true; }
+      else if (videoMode) {
+        // Start the music only once the video actually begins, synced to it — otherwise the (lighter)
+        // audio buffers first and plays ahead of the still-loading video.
+        audio.pause();
+        var startMusic = function () { try { audio.currentTime = videoEl.currentTime || 0; } catch (e) {} audio.play().catch(function () {}); };
+        var pv = videoEl.play();
+        if (pv && pv.then) pv.then(startMusic).catch(startMusic); else startMusic();
+        videoPlaying = true;
+      }
       else { audio.play().catch(function () {}); }
       document.body.classList.add('playing');
     } else if (d.cmd === 'pause') {
