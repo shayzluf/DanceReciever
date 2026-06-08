@@ -16,6 +16,7 @@
  *   phone → TV   { t:'cmd', cmd:'play'|'pause'|'stop' }
  *   phone → TV   { t:'feedback', lane, rating, points, gold, at }   // at = target TV-playhead (sec)
  *   phone → TV   { t:'score', scores:[{lane,total,combo}] }
+ *   phone → TV   { t:'final', players:[{lane,total,stars}] }   // round over → big final-score reveal
  *   phone → TV   { t:'ping', id, cs }
  *   TV → phone   { t:'ph', rt, ts, st, seq }  ·  { t:'pong', id, cs, rs }  ·  { t:'ready' }
  */
@@ -32,11 +33,12 @@
   var glowEl = document.getElementById('glow');
   var wordEl = document.getElementById('word');
   var scoresEl = document.getElementById('scores');
+  var finalEl = document.getElementById('final');
   var statusEl = document.getElementById('status');
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun5-video5';
+  var BUILD = 'jun5-video6';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -240,6 +242,53 @@
     scoresEl.innerHTML = html;
   }
 
+  // ---- Final-score reveal (end of a cast round): big, exact total in sync with the phone ----
+  function showFinal(players) {
+    if (!finalEl) finalEl = document.getElementById('final');
+    if (!finalEl) return;
+    var wrap = finalEl.querySelector('.final-scores');
+    var html = '';
+    if (players && players.length) {
+      for (var i = 0; i < players.length; i++) {
+        var p = players[i];
+        var stars = '', n = p.stars || 0;
+        for (var s = 0; s < 5; s++) stars += (s < n) ? '★' : '☆';
+        html += '<div class="final-player">'
+          + (players.length > 1 ? '<div class="final-lane">P' + ((p.lane || 0) + 1) + '</div>' : '')
+          + '<div class="final-num">' + Math.round(p.total || 0) + '</div>'
+          + '<div class="final-stars">' + stars + '</div></div>';
+      }
+    }
+    if (wrap) {
+      wrap.innerHTML = html;
+      finalEl.style.display = 'flex';
+      wrap.style.transition = 'none'; wrap.style.transform = 'scale(0.6)'; wrap.style.opacity = '0';
+      void wrap.offsetWidth;
+      wrap.style.transition = 'transform 0.55s cubic-bezier(.2,.9,.2,1.25), opacity 0.4s ease';
+      wrap.style.transform = 'scale(1)'; wrap.style.opacity = '1';
+    } else {
+      finalEl.style.display = 'flex';
+    }
+    // celebratory rising arpeggio
+    tone(784, 0.12, 0.5);
+    setTimeout(function () { tone(988, 0.12, 0.5); }, 120);
+    setTimeout(function () { tone(1319, 0.22, 0.5); }, 240);
+  }
+
+  function hideFinal() { if (finalEl) finalEl.style.display = 'none'; }
+
+  function onFinal(d) {
+    clearPendingFeedback();
+    // Freeze the round on its last frame and reveal the score. Over an embed we must not draw on the
+    // player (ToS) — hide it first so the score sits on a clean background.
+    try { if (videoEl) videoEl.pause(); } catch (e) { /* ignore */ }
+    try { if (audio) audio.pause(); } catch (e) { /* ignore */ }
+    if (embedMode) { if (embedApi) { try { embedApi.pause(); } catch (e) {} } if (embedEl) embedEl.style.display = 'none'; }
+    document.body.classList.remove('playing');
+    setStatus('');
+    showFinal(d.players);
+  }
+
   // ---- Coach rendering (synced to the song) ----
   function poseAt(t) {
     var fr = poseFrames;
@@ -360,6 +409,7 @@
 
   function onLoad(d) {
     clearPendingFeedback();
+    hideFinal();
     exitVideoMode();
     canvas.style.display = '';
     poseFrames = [];
@@ -378,6 +428,7 @@
   // Our own content → feedback overlays are allowed (presentFeedback only suppresses them for embeds).
   function onLoadVideo(d) {
     clearPendingFeedback();
+    hideFinal();
     poseFrames = []; loaded = false; mockMode = false;
     embedMode = false; embedPlaying = false; embedApi = null; embedPlayer = null;
     if (embedEl) { embedEl.style.display = 'none'; embedEl.innerHTML = ''; }
@@ -403,6 +454,7 @@
   // Reference-don't-host on the TV: load the routine's platform video (real video + original sound).
   function onLoadEmbed(d) {
     clearPendingFeedback();
+    hideFinal();
     exitVideoMode();
     loaded = false; mockMode = false;
     embedMode = true; embedPlaying = false; embedTime = 0; embedApi = null; embedPlayer = null;
@@ -539,6 +591,7 @@
       else { audio.pause(); }
     } else if (d.cmd === 'stop') {
       clearPendingFeedback();
+      hideFinal();
       if (embedMode) {
         if (embedApi) { embedApi.pause(); embedApi.seek0(); }
         embedEl.style.display = 'none';
@@ -603,6 +656,7 @@
         case 'cmd': onCmd(d); break;
         case 'feedback': onFeedback(d); break;
         case 'score': renderScores(d.scores); break;
+        case 'final': onFinal(d); break;
         default: break;
       }
     });
@@ -663,6 +717,8 @@
       total += x[2];
       renderScores([{ lane: 0, total: total, combo: combo }]);
     }, 1300);
+    // Browser-only dev hook (mock): window.DNTestFinal() previews the final-score reveal.
+    window.DNTestFinal = function (p) { onFinal({ players: p || [{ lane: 0, total: 2910, stars: 4 }] }); };
   }
 
   // ---- Start ----

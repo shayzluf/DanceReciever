@@ -65,6 +65,31 @@ html, body {
 .scores .sc { font-size: 3.4vh; font-weight: 800; font-variant-numeric: tabular-nums; }
 .scores .cb { font-size: 1.8vh; color: #ffd400; }
 
+/* Big end-of-round score reveal (shown over a frozen last frame). */
+.final {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2vh;
+  background: rgba(0, 0, 0, 0.55);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+.final-title { font-size: 4vh; font-weight: 800; letter-spacing: 0.3em; opacity: 0.8; }
+.final-scores { display: flex; gap: 7vw; align-items: flex-end; }
+.final-player { text-align: center; }
+.final-lane { font-size: 3vh; font-weight: 700; opacity: 0.8; margin-bottom: 0.5vh; }
+.final-num {
+  font-size: 19vh; font-weight: 900; line-height: 0.95; font-variant-numeric: tabular-nums;
+  background: linear-gradient(92deg, #ff5ca8, #6a8bff 70%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.final-stars { font-size: 5vh; color: #ffd400; letter-spacing: 0.15em; }
+
 .hud {
   position: absolute;
   left: 4vw;
