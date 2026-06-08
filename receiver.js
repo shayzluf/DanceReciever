@@ -17,6 +17,9 @@
  *   phone → TV   { t:'feedback', lane, rating, points, gold, at }   // at = target TV-playhead (sec)
  *   phone → TV   { t:'score', scores:[{lane,total,combo}] }
  *   phone → TV   { t:'final', players:[{lane,total,stars}] }   // round over → big final-score reveal
+ *   phone → TV   { t:'getready', n }  ·  { t:'go' }            // "Get Ready" countdown on the TV
+ *   phone → TV   { t:'framing', state:'setup'|'paused', instr, players:[{lane,ok,j}] }  // Set up your stage
+ *   phone → TV   { t:'guard', lane, state:'grace'|'nudge'|'rejoin'|'ok', ring }  // in-round "come back" nudge
  *   phone → TV   { t:'ping', id, cs }
  *   TV → phone   { t:'ph', rt, ts, st, seq }  ·  { t:'pong', id, cs, rs }  ·  { t:'ready' }
  */
@@ -34,11 +37,17 @@
   var wordEl = document.getElementById('word');
   var scoresEl = document.getElementById('scores');
   var finalEl = document.getElementById('final');
+  var getreadyEl = document.getElementById('getready');
+  var stageEl = document.getElementById('stage');
+  var stageBox = stageEl ? stageEl.querySelector('.stage-box') : null;
+  var stageCanvas = document.getElementById('stagecanvas');
+  var stageCtx = stageCanvas ? stageCanvas.getContext('2d') : null;
+  var guardEl = document.getElementById('guard');
   var statusEl = document.getElementById('status');
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun5-video6';
+  var BUILD = 'jun5-video7';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -289,6 +298,98 @@
     showFinal(d.players);
   }
 
+  // ---- Pro cast UX: "Get Ready" countdown, "Set up your stage" framing, in-round guard ----
+
+  function hideGetReady() { if (getreadyEl) getreadyEl.style.display = 'none'; }
+  function onGetReady(d) {
+    hideStage(); hideFinal();
+    if (!getreadyEl) return;
+    var num = getreadyEl.querySelector('.gr-num');
+    if (num) {
+      num.textContent = String(d.n);
+      num.style.transition = 'none'; num.style.transform = 'scale(1.35)';
+      void num.offsetWidth;
+      num.style.transition = 'transform 0.55s ease-out';
+      num.style.transform = 'scale(1)';
+    }
+    getreadyEl.style.display = 'flex';
+    tone(d.n <= 1 ? 1320 : 660, 0.09, 0.4);   // brighter tone on the last beat
+  }
+  function onGo() {
+    var num = getreadyEl ? getreadyEl.querySelector('.gr-num') : null;
+    if (num) num.textContent = 'GO!';
+    tone(784, 0.1, 0.5);
+    setTimeout(function () { tone(988, 0.1, 0.5); }, 90);
+    setTimeout(function () { tone(1319, 0.18, 0.5); }, 180);
+    setTimeout(hideGetReady, 650);
+  }
+
+  // Draw one live skeleton mapped DIRECTLY from [0,1] frame coords into the box, so the dancer's real
+  // position (and any edge clipping) is visible — unlike drawFigure, which fills the screen.
+  function drawSkeletonRaw(c, joints, W, H, mir, color) {
+    function map(p) { var nx = mir ? (1 - p[0]) : p[0]; return [nx * W, p[1] * H]; }
+    var lw = Math.max(3, H * 0.016);
+    c.lineCap = 'round'; c.lineJoin = 'round'; c.lineWidth = lw; c.strokeStyle = color;
+    for (var i = 0; i < bones.length; i++) {
+      var a = joints[bones[i][0]], b = joints[bones[i][1]];
+      if (!a || !b) continue;
+      var ma = map(a), mb = map(b);
+      c.beginPath(); c.moveTo(ma[0], ma[1]); c.lineTo(mb[0], mb[1]); c.stroke();
+    }
+    var head = joints.nose || joints.neck;
+    if (head) { var mh = map(head); c.fillStyle = color; c.beginPath(); c.arc(mh[0], mh[1], lw * 1.3, 0, 2 * Math.PI); c.fill(); }
+  }
+
+  function hideStage() { if (stageEl) stageEl.style.display = 'none'; }
+  function onFraming(d) {
+    hideGetReady(); hideFinal();
+    if (!stageEl) return;
+    var title = stageEl.querySelector('.stage-title');
+    var instr = stageEl.querySelector('.stage-instr');
+    if (title) title.textContent = (d.state === 'paused') ? 'Paused' : 'Set up your stage';
+    if (instr) instr.textContent = d.instr || '';
+    var players = d.players || [];
+    var allOk = players.length > 0 && players.every(function (p) { return p.ok; });
+    if (stageBox) stageBox.classList.toggle('ok', allOk);
+    if (stageCtx && stageCanvas) {
+      var w = stageCanvas.clientWidth || 360, h = stageCanvas.clientHeight || 640;
+      if (stageCanvas.width !== w || stageCanvas.height !== h) { stageCanvas.width = w; stageCanvas.height = h; }
+      stageCtx.clearRect(0, 0, stageCanvas.width, stageCanvas.height);
+      for (var i = 0; i < players.length; i++) {
+        if (players[i].j) {
+          drawSkeletonRaw(stageCtx, players[i].j, stageCanvas.width, stageCanvas.height, mirrored, players[i].ok ? '#34c759' : '#f2f2f7');
+        }
+      }
+    }
+    stageEl.style.display = 'flex';
+  }
+
+  // In-round per-player "come back!" nudge chips with a rejoin ring.
+  var guardChips = {};
+  function clearGuards() {
+    if (guardEl) { for (var k in guardChips) { if (guardChips.hasOwnProperty(k)) { try { guardEl.removeChild(guardChips[k]); } catch (e) {} } } }
+    guardChips = {};
+  }
+  function onGuard(d) {
+    if (!guardEl) return;
+    var lane = d.lane || 0;
+    if (d.state === 'ok' || d.state === 'rejoin') {
+      if (guardChips[lane]) { try { guardEl.removeChild(guardChips[lane]); } catch (e) {} delete guardChips[lane]; }
+      return;
+    }
+    var chip = guardChips[lane];
+    if (!chip) {
+      chip = document.createElement('div');
+      chip.className = 'nudge';
+      chip.innerHTML = '<span class="ring"></span><span class="lbl"></span>';
+      guardEl.appendChild(chip);
+      guardChips[lane] = chip;
+      tone(440, 0.12, 0.3);   // soft, distinct from a "miss"
+    }
+    chip.querySelector('.lbl').textContent = 'P' + (lane + 1) + ' — come back!';
+    chip.querySelector('.ring').style.setProperty('--p', Math.round((d.ring || 0) * 100));
+  }
+
   // ---- Coach rendering (synced to the song) ----
   function poseAt(t) {
     var fr = poseFrames;
@@ -409,7 +510,7 @@
 
   function onLoad(d) {
     clearPendingFeedback();
-    hideFinal();
+    hideFinal(); clearGuards();
     exitVideoMode();
     canvas.style.display = '';
     poseFrames = [];
@@ -428,7 +529,7 @@
   // Our own content → feedback overlays are allowed (presentFeedback only suppresses them for embeds).
   function onLoadVideo(d) {
     clearPendingFeedback();
-    hideFinal();
+    hideFinal(); clearGuards();
     poseFrames = []; loaded = false; mockMode = false;
     embedMode = false; embedPlaying = false; embedApi = null; embedPlayer = null;
     if (embedEl) { embedEl.style.display = 'none'; embedEl.innerHTML = ''; }
@@ -454,7 +555,7 @@
   // Reference-don't-host on the TV: load the routine's platform video (real video + original sound).
   function onLoadEmbed(d) {
     clearPendingFeedback();
-    hideFinal();
+    hideFinal(); clearGuards();
     exitVideoMode();
     loaded = false; mockMode = false;
     embedMode = true; embedPlaying = false; embedTime = 0; embedApi = null; embedPlayer = null;
@@ -591,7 +692,7 @@
       else { audio.pause(); }
     } else if (d.cmd === 'stop') {
       clearPendingFeedback();
-      hideFinal();
+      hideFinal(); clearGuards(); hideStage(); hideGetReady();
       if (embedMode) {
         if (embedApi) { embedApi.pause(); embedApi.seek0(); }
         embedEl.style.display = 'none';
@@ -657,6 +758,10 @@
         case 'feedback': onFeedback(d); break;
         case 'score': renderScores(d.scores); break;
         case 'final': onFinal(d); break;
+        case 'getready': onGetReady(d); break;
+        case 'go': onGo(d); break;
+        case 'framing': onFraming(d); break;
+        case 'guard': onGuard(d); break;
         default: break;
       }
     });
@@ -717,8 +822,13 @@
       total += x[2];
       renderScores([{ lane: 0, total: total, combo: combo }]);
     }, 1300);
-    // Browser-only dev hook (mock): window.DNTestFinal() previews the final-score reveal.
+    // Browser-only dev hooks (mock): preview the cast-UX overlays.
     window.DNTestFinal = function (p) { onFinal({ players: p || [{ lane: 0, total: 2910, stars: 4 }] }); };
+    window.DNTestGetReady = function (n) { onGetReady({ n: n == null ? 3 : n }); };
+    window.DNTestGo = function () { onGo(); };
+    window.DNTestFraming = function (instr, ok) { onFraming({ state: 'setup', instr: instr || 'Back up — I need to see your feet', players: [{ lane: 0, ok: !!ok, j: standingJoints(0.3) }] }); };
+    window.DNTestPaused = function () { onFraming({ state: 'paused', instr: 'Step back into view', players: [{ lane: 0, ok: false, j: standingJoints(0.3) }] }); };
+    window.DNTestGuard = function (ring) { onGuard({ lane: 1, state: 'nudge', ring: ring == null ? 0.45 : ring }); };
   }
 
   // ---- Start ----

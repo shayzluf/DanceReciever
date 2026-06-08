@@ -90,6 +90,52 @@ html, body {
 }
 .final-stars { font-size: 5vh; color: #ffd400; letter-spacing: 0.15em; }
 
+/* "Get Ready" countdown */
+.getready {
+  position: absolute; inset: 0; z-index: 10;
+  display: none; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+}
+.gr-num {
+  font-size: 40vh; font-weight: 900; line-height: 1; font-variant-numeric: tabular-nums;
+  background: linear-gradient(92deg, #ff5ca8, #6a8bff 70%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+
+/* "Set up your stage" framing / paused screen */
+.stage {
+  position: absolute; inset: 0; z-index: 10;
+  display: none; flex-direction: column; align-items: center; justify-content: center; gap: 2.5vh;
+  background: rgba(0, 0, 0, 0.8);
+}
+.stage-title { font-size: 4vh; font-weight: 800; letter-spacing: 0.04em; opacity: 0.95; }
+.stage-box {
+  position: relative; height: 62vh; aspect-ratio: 9 / 16;
+  border-radius: 1.6vh; background: rgba(255, 255, 255, 0.05); overflow: hidden;
+}
+.stage-box canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.stage-safe {
+  position: absolute; inset: 7%; border: 0.4vh dashed rgba(255, 255, 255, 0.35); border-radius: 1.2vh;
+  transition: border-color 0.3s ease;
+}
+.stage-box.ok .stage-safe { border-color: #34c759; }
+.stage-instr { font-size: 3.4vh; font-weight: 700; text-align: center; max-width: 80vw; }
+
+/* In-round "come back" nudges */
+.guard {
+  position: absolute; top: 16vh; right: 4vw; z-index: 7;
+  display: flex; flex-direction: column; gap: 1.2vh; align-items: flex-end; pointer-events: none;
+}
+.guard .nudge {
+  display: flex; align-items: center; gap: 1vw;
+  background: rgba(255, 159, 10, 0.92); color: #1a1205; font-weight: 800; font-size: 2.4vh;
+  padding: 1vh 1.6vw; border-radius: 1.4vh;
+}
+.guard .ring {
+  width: 2.6vh; height: 2.6vh; border-radius: 50%;
+  background: conic-gradient(#1a1205 calc(var(--p, 0) * 1%), rgba(0, 0, 0, 0.22) 0);
+}
+
 .hud {
   position: absolute;
   left: 4vw;

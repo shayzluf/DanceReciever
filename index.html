@@ -6,7 +6,7 @@
   <title>DanceNow TV</title>
   <!-- ?v= cache-busts the JS/CSS on the Cast device when this index reloads; bump it (and BUILD in
        receiver.js) on every receiver change so a stale device can't silently serve old code. -->
-  <link rel="stylesheet" href="styles.css?v=jun5-video6">
+  <link rel="stylesheet" href="styles.css?v=jun5-video7">
   <!-- Google Cast Application Framework (CAF) receiver SDK -->
   <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
 </head>
@@ -39,6 +39,19 @@
   <!-- Big final-score reveal at the end of a cast round (exact total, in sync with the phone). -->
   <div id="final" class="final"><div class="final-title">FINAL</div><div class="final-scores"></div></div>
 
+  <!-- "Get Ready" countdown on the TV (5..1, GO!). -->
+  <div id="getready" class="getready"><div class="gr-num"></div></div>
+
+  <!-- "Set up your stage" framing / paused screen: the live skeleton inside a safe-zone + one instruction. -->
+  <div id="stage" class="stage">
+    <div class="stage-title"></div>
+    <div class="stage-box"><canvas id="stagecanvas"></canvas><div class="stage-safe"></div></div>
+    <div class="stage-instr"></div>
+  </div>
+
+  <!-- In-round "come back" nudges — one chip per out-of-frame player. -->
+  <div id="guard" class="guard"></div>
+
   <div id="hud" class="hud">
     <div class="brand">DanceNow</div>
     <div id="status">waiting for a phone to connect…</div>
@@ -48,6 +61,6 @@
        is missing or wrong after a deploy, the Cast device is serving a cached app → reboot it. -->
   <div id="build" style="position:fixed; right:10px; bottom:8px; font:11px/1 monospace; opacity:0.4; color:#fff; z-index:9;"></div>
 
-  <script src="receiver.js?v=jun5-video6"></script>
+  <script src="receiver.js?v=jun5-video7"></script>
 </body>
 </html>
