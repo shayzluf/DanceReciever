@@ -288,6 +288,7 @@
 
   function onFinal(d) {
     clearPendingFeedback();
+    clearGuards(); hideStage(); hideGetReady();
     // Freeze the round on its last frame and reveal the score. Over an embed we must not draw on the
     // player (ToS) — hide it first so the score sits on a clean background.
     try { if (videoEl) videoEl.pause(); } catch (e) { /* ignore */ }
