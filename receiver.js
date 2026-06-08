@@ -47,7 +47,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun5-video7';
+  var BUILD = 'jun5-video8';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -343,7 +343,7 @@
 
   function hideStage() { if (stageEl) stageEl.style.display = 'none'; }
   function onFraming(d) {
-    hideGetReady(); hideFinal();
+    hideGetReady(); hideFinal(); clearGuards();   // the framing/paused screen owns the moment — drop stale nudges
     if (!stageEl) return;
     var title = stageEl.querySelector('.stage-title');
     var instr = stageEl.querySelector('.stage-instr');
