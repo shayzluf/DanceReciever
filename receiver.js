@@ -70,7 +70,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun9-rail1';
+  var BUILD = 'jun9-rail2';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -433,16 +433,23 @@
     }
     var j = dbgLive.j, bm = dbgLive.bones || [];
     function map(p) { var nx = mirrored ? (1 - p[0]) : p[0]; return [rx + nx * rw, ry + p[1] * rh]; }
-    var lw = Math.max(2, rh * 0.012);
+    var lw = Math.max(2, rh * 0.014);
+    // POSITIVE-ONLY: only the limbs you're nailing light up green; off limbs simply don't draw (no red
+    // nagging, far less clutter — legible at a distance).
+    var GREEN = 0.6;
     dbgCtx.lineCap = 'round'; dbgCtx.lineWidth = lw;
+    dbgCtx.strokeStyle = '#3ee06b';
+    dbgCtx.shadowColor = 'rgba(62,224,107,0.85)'; dbgCtx.shadowBlur = lw * 1.6;
     for (var i = 0; i < bones.length; i++) {
+      if (bm[i] == null || bm[i] < GREEN) continue;
       var a = j[bones[i][0]], b = j[bones[i][1]]; if (!a || !b) continue;
-      dbgCtx.strokeStyle = matchColor(bm[i]);
       var ma = map(a), mb = map(b);
       dbgCtx.beginPath(); dbgCtx.moveTo(ma[0], ma[1]); dbgCtx.lineTo(mb[0], mb[1]); dbgCtx.stroke();
     }
+    dbgCtx.shadowBlur = 0;
+    // A faint head dot anchors the lit limbs to a body without nagging.
     var head = j.nose || j.neck;
-    if (head) { var mh = map(head); dbgCtx.fillStyle = '#39ff14'; dbgCtx.beginPath(); dbgCtx.arc(mh[0], mh[1], lw * 1.3, 0, 2 * Math.PI); dbgCtx.fill(); }
+    if (head) { var mh = map(head); dbgCtx.fillStyle = 'rgba(255,255,255,0.22)'; dbgCtx.beginPath(); dbgCtx.arc(mh[0], mh[1], lw * 1.2, 0, 2 * Math.PI); dbgCtx.fill(); }
   }
 
   // ---- Final-score reveal (end of a cast round): big, exact total in sync with the phone ----
