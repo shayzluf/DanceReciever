@@ -70,7 +70,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun9-rail2';
+  var BUILD = 'jun9-rail3';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -110,6 +110,13 @@
   var videoMode = false;
   var videoPlaying = false;
   var videoEl = document.getElementById('castvideo');
+
+  // When playback actually started (sec). For ~1.5s after, the music+video decoders are still settling, so
+  // we DON'T re-seek the mp3 to the clip (those re-seeks were the start stutter) and we DON'T duck the
+  // music for early feedback (which made the tones "take over" before the track established).
+  var playStartedAt = 0;
+  var SETTLE_NO_DUCK = 0.9;   // sec: hold full music
+  var SETTLE_NO_SYNC = 1.5;   // sec: don't correct audio↔video drift
 
   function now() { return performance.now() / 1000; }
   function setStatus(t) { if (statusEl) statusEl.textContent = t; }
@@ -271,6 +278,20 @@
     duckToken += 1;
     var token = duckToken;
     setTimeout(function () { if (token === duckToken) rampMusic(1.0, 220); }, holdSeconds * 1000);
+  }
+
+  // Start playback with the music quiet, then ramp it up — establishes the track smoothly instead of
+  // popping in over a still-settling clip. Also stamps playStartedAt for the settle window.
+  function startMusicFadeIn() {
+    playStartedAt = now();
+    if (musicGain && actx) {
+      var t = actx.currentTime;
+      musicGain.gain.cancelScheduledValues(t);
+      musicGain.gain.setValueAtTime(0.2, t);
+    } else if (audio) {
+      audio.volume = 0.2;
+    }
+    rampMusic(1.0, 480);
   }
 
   // ---- Feedback visuals ----
@@ -688,9 +709,10 @@
     // Dev-only reference-pose overlay (no-op unless debug is on + a dbgpose has arrived).
     if (document.body.classList.contains('debug')) drawDebug();
 
-    // Video mode: the silent clip is the master clock — keep the catalog mp3 locked to it.
-    if (videoMode && videoEl && !videoEl.paused && audio && !audio.paused) {
-      if (Math.abs((audio.currentTime || 0) - (videoEl.currentTime || 0)) > 0.25) {
+    // Video mode: the silent clip is the master clock — keep the catalog mp3 locked to it. Skip the first
+    // ~1.5s (decoders still settling) so we don't re-seek the mp3 repeatedly — that was the start stutter.
+    if (videoMode && videoEl && !videoEl.paused && audio && !audio.paused && (now() - playStartedAt) > SETTLE_NO_SYNC) {
+      if (Math.abs((audio.currentTime || 0) - (videoEl.currentTime || 0)) > 0.3) {
         try { audio.currentTime = videoEl.currentTime; } catch (e) { /* not seekable yet */ }
       }
     }
@@ -915,8 +937,10 @@
       videoEl.play().then(function () {
         try { audio.currentTime = videoEl.currentTime || 0; } catch (e) {}
         audio.play().catch(function () {});
+        startMusicFadeIn();
       }).catch(function () {
         audio.play().catch(function () {}); // last resort: don't leave the round silent
+        startMusicFadeIn();
       });
     }
     if (videoEl.readyState >= 3) begin();               // HAVE_FUTURE_DATA → ready now
@@ -931,7 +955,7 @@
       resumeAudio();
       if (embedMode) { if (embedApi) embedApi.play(); }
       else if (videoMode) { startVideoModePlayback(); videoPlaying = true; }
-      else { audio.play().catch(function () {}); }
+      else { audio.play().catch(function () {}); startMusicFadeIn(); }  // figure mode: fade music in too
       document.body.classList.add('playing');
     } else if (d.cmd === 'pause') {
       if (embedMode) { if (embedApi) embedApi.pause(); }
@@ -974,9 +998,12 @@
   function presentFeedback(d) {
     toneTier(d.rating, d.gold);
     // Gentle, brief duck only on the prominent moments so the tone pops — the music stays clearly audible
-    // and never disappears. good/ok/miss don't duck at all (their tone cuts through on its own).
-    if (d.gold && d.rating !== 'miss') duck(0.7, 0.4);
-    else if (d.rating === 'perfect') duck(0.8, 0.25);
+    // and never disappears. good/ok/miss don't duck at all (their tone cuts through on its own). And NOT in
+    // the first ~0.9s: ducking before the track establishes made early feedback "take over" at cast start.
+    if ((now() - playStartedAt) > SETTLE_NO_DUCK) {
+      if (d.gold && d.rating !== 'miss') duck(0.7, 0.4);
+      else if (d.rating === 'perfect') duck(0.8, 0.25);
+    }
     // Rail feedback in EVERY mode — flash the move tile just judged + the player's score chip. We never
     // draw over the video (licensing/ToS); the old full-screen glow + centered word are retired.
     flashTile(d.idx, d.rating, d.gold, d.points);
