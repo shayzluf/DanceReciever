@@ -6,7 +6,7 @@
   <title>DanceNow TV</title>
   <!-- ?v= cache-busts the JS/CSS on the Cast device when this index reloads; bump it (and BUILD in
        receiver.js) on every receiver change so a stale device can't silently serve old code. -->
-  <link rel="stylesheet" href="styles.css?v=jun5-video8">
+  <link rel="stylesheet" href="styles.css?v=jun9-rail1">
   <!-- Google Cast Application Framework (CAF) receiver SDK -->
   <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
 </head>
@@ -15,25 +15,36 @@
        feedback tones in one output stream). Requires CORS (GET) on the audio origin (R2). -->
   <audio id="song" preload="auto" crossorigin="anonymous"></audio>
 
-  <!-- The coach figure is rendered here, from the pose timeline the phone streams, synced to the song. -->
-  <canvas id="coach"></canvas>
+  <!-- The COACH STAGE: a constrained region holding whichever coach is active (drawn figure / the user's
+       silent clip / a platform embed). It is sized to a sub-region (centre column in portrait, top band in
+       landscape) so the feedback rail can sit BESIDE/UNDER it — we never draw feedback on the video. -->
+  <div id="videostage">
+    <!-- Figure mode: the coach is drawn here from the streamed pose timeline. -->
+    <canvas id="coach"></canvas>
+    <!-- Embed mode: the routine's platform video (YouTube/TikTok/Vimeo) plays here with its own sound. -->
+    <div id="embed"></div>
+    <!-- Video mode: the user's *silent* recorded clip (staged ephemerally on R2) plays here as the coach;
+         the licensed catalog mp3 plays from #song, synced. object-fit:contain (NEVER cover — no cropping). -->
+    <video id="castvideo" muted playsinline webkit-playsinline></video>
+    <!-- Dev-only debug skeleton overlay: draws the reference pose ON the clip to verify alignment/mirror/
+         sync. OFF by default (enable with ?debug=1 / DNTestDebug / the phone toggle); never ships enabled. -->
+    <canvas id="dbgskeleton"></canvas>
+  </div>
 
-  <!-- Embed mode: the routine's platform video (YouTube/TikTok/Vimeo) plays here with its own sound. -->
-  <div id="embed" style="position:fixed; inset:0; width:100%; height:100%; border:0; display:none; background:#000;"></div>
+  <!-- The FEEDBACK RAIL: the move filmstrip ("now / next" pictograms) + per-player score chips. Sits in the
+       right pillar for portrait clips, as a bottom strip for landscape clips. Never overlaps the video. -->
+  <div id="rail">
+    <div id="railscores" class="railscores"></div>
+    <div id="filmstrip"></div>
+  </div>
 
-  <!-- Video mode (local catalog routine): the user's *silent* recorded clip (staged ephemerally on R2)
-       plays here as the coach; the licensed catalog mp3 plays from #song, synced. Our own content, so
-       feedback overlays (glow/word/scores, which sit above this at higher z-index) ARE allowed. -->
-  <video id="castvideo" muted playsinline webkit-playsinline
-         style="position:fixed; inset:0; width:100%; height:100%; object-fit:contain; display:none; background:#000; z-index:1;"></video>
-
-  <!-- Ambient edge-glow that flashes on each judged moment. -->
+  <!-- Ambient edge-glow (figure mode legacy; retired in favour of the rail flash). -->
   <div id="glow" class="glow"></div>
 
-  <!-- Big rating word ("PERFECT  +250"), centered. -->
+  <!-- Big rating word (legacy; retired in favour of the rail flash). -->
   <div id="wordwrap"><div id="word"></div></div>
 
-  <!-- Per-player scoreboard. -->
+  <!-- Legacy corner scoreboard (unused; scores now render into #railscores). -->
   <div id="scores" class="scores"></div>
 
   <!-- Big final-score reveal at the end of a cast round (exact total, in sync with the phone). -->
@@ -61,6 +72,6 @@
        is missing or wrong after a deploy, the Cast device is serving a cached app → reboot it. -->
   <div id="build" style="position:fixed; right:10px; bottom:8px; font:11px/1 monospace; opacity:0.4; color:#fff; z-index:9;"></div>
 
-  <script src="receiver.js?v=jun5-video8"></script>
+  <script src="receiver.js?v=jun9-rail1"></script>
 </body>
 </html>

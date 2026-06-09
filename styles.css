@@ -9,13 +9,119 @@ html, body {
   color: #fff;
 }
 
-#coach {
+/* ============================================================================
+   Coach STAGE + feedback RAIL — the split layout. The video is constrained to
+   the stage; feedback (move filmstrip + score chips) lives in the rail BESIDE
+   (portrait) or UNDER (landscape) it, so we never draw on top of the video.
+   ============================================================================ */
+#videostage {
+  position: fixed;
+  z-index: 2;
+  background: #000;
+  overflow: hidden;
+}
+#videostage > #coach,
+#videostage > #castvideo,
+#videostage > #embed,
+#videostage > #dbgskeleton {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  display: block;
 }
+#coach { display: block; }
+#castvideo { object-fit: contain; background: #000; display: none; }   /* contain: never crop licensed video; shown by JS */
+#embed { border: 0; background: #000; display: none; }
+/* Dev-only reference-pose overlay; hidden unless body.debug (set by ?debug / DNTestDebug / phone toggle). */
+#dbgskeleton { display: none; pointer-events: none; z-index: 4; }
+body.debug #videostage > #dbgskeleton { display: block; }
+
+#rail {
+  position: fixed;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2vh;
+  padding: 4vh 2.2vw;            /* overscan-safe inset */
+  overflow: hidden;
+}
+#filmstrip { display: flex; gap: 1.6vh; flex: 1 1 auto; align-items: center; justify-content: center; }
+
+/* Portrait clip → centre stage + right rail; vertical filmstrip. */
+body.orient-portrait #videostage { left: 12vw; width: 40vw; top: 0; height: 100vh; }
+body.orient-portrait #rail { left: 55vw; width: 31vw; top: 0; height: 100vh; }
+body.orient-portrait #filmstrip { flex-direction: column; }
+
+/* Landscape clip → top stage + bottom rail; horizontal filmstrip. */
+body.orient-landscape #videostage { left: 0; width: 100vw; top: 0; height: 62vh; }
+body.orient-landscape #rail { left: 0; width: 100vw; top: 62vh; height: 38vh; }
+body.orient-landscape #filmstrip { flex-direction: row; }
+body.orient-landscape #railscores { justify-content: center; }
+
+/* ---- Move filmstrip tiles (Just-Dance "now / next" pictograms) ---- */
+.tile {
+  position: relative;
+  flex: 0 0 auto;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 1.6vh;
+  overflow: hidden;
+  transition: transform 0.16s cubic-bezier(.2, .9, .2, 1.2), opacity 0.16s ease, box-shadow 0.2s ease;
+}
+/* Portrait: stack 4 tiles → size by HEIGHT (vh) so they fit the column; width follows the 3:4 aspect. */
+body.orient-portrait .tile { height: 16vh; aspect-ratio: 3 / 4; }
+body.orient-portrait .tile.now { height: 23vh; }
+/* Landscape: a row of tiles → size by HEIGHT of the strip; width follows the aspect. */
+body.orient-landscape .tile { height: 66%; aspect-ratio: 3 / 4; }
+body.orient-landscape .tile.now { height: 92%; }
+.tile canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.tile.dim2 { opacity: 0.78; }
+.tile.dim3 { opacity: 0.6; }
+.tile.dim4 { opacity: 0.46; }
+.tile .kicker {
+  position: absolute; top: 0.6vh; left: 0; right: 0; text-align: center;
+  font-size: 1.5vh; font-weight: 800; letter-spacing: 0.14em; opacity: 0.65;
+}
+.tile.now { background: rgba(255, 255, 255, 0.11); }
+.tile.now .kicker { color: #fff; opacity: 0.95; }
+.tile .badge { position: absolute; top: 0.5vh; right: 0.7vw; color: #ffd400; font-size: 2.2vh; text-shadow: 0 0 1vh rgba(255, 212, 0, 0.6); }
+.tile.gold { box-shadow: inset 0 0 0 0.3vh rgba(255, 212, 0, 0.85), 0 0 2.6vh rgba(255, 212, 0, 0.3); }
+.tile.gold.now { animation: goldring 1.2s ease-in-out infinite; }
+/* progress hairline under NOW — fills across the interval to the next move (continuous "approach"). */
+.tile .hair { position: absolute; left: 9%; right: 9%; bottom: 0.9vh; height: 0.5vh; border-radius: 0.5vh; background: rgba(255, 255, 255, 0.16); overflow: hidden; display: none; }
+.tile.now .hair { display: block; }
+.tile .hair > i { display: block; height: 100%; width: 0%; background: #f2f2f7; border-radius: 0.5vh; }
+/* rating flash on the retiring tile */
+.tile.flash { box-shadow: inset 0 0 0 0.4vh var(--fc, #34c759), 0 0 3vh var(--fc, #34c759); }
+.tile.shake { animation: tshake 0.32s ease; }
+.tile .plus {
+  position: absolute; left: 0; right: 0; top: 38%; text-align: center;
+  font-size: 3vh; font-weight: 900; color: var(--fc, #34c759); opacity: 0;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.7); pointer-events: none;
+}
+.tile .plus.go { animation: plusfloat 0.7s ease-out; }
+@keyframes goldring {
+  0%, 100% { box-shadow: inset 0 0 0 0.3vh rgba(255, 212, 0, 0.85), 0 0 2.6vh rgba(255, 212, 0, 0.3); }
+  50% { box-shadow: inset 0 0 0 0.45vh rgba(255, 212, 0, 1), 0 0 4.2vh rgba(255, 212, 0, 0.6); }
+}
+@keyframes plusfloat { 0% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; transform: translateY(-3vh); } }
+@keyframes tshake { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-0.8vw); } 75% { transform: translateX(0.8vw); } }
+
+/* ---- Rail score chips (per player) ---- */
+.railscores { display: flex; gap: 1.4vw; flex-wrap: wrap; justify-content: center; flex: 0 0 auto; }
+.rchip {
+  min-width: 8vw; text-align: center; background: rgba(255, 255, 255, 0.06);
+  border: 0.25vh solid transparent; border-radius: 1.4vh; padding: 1vh 1.2vw;
+  transition: border-color 0.25s ease, transform 0.18s ease;
+}
+.rchip .p { font-size: 1.7vh; font-weight: 700; opacity: 0.8; }
+.rchip .sc { font-size: 3.4vh; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.05; }
+.rchip .cb { font-size: 1.8vh; font-weight: 800; color: #ffd400; min-height: 2vh; }
+.rchip.flash { border-color: var(--fc, #34c759); }
+.rchip.bump .cb { animation: cbbump 0.3s ease; }
+@keyframes cbbump { 0%,100% { transform: scale(1); } 40% { transform: scale(1.4); } }
+
+#coach { display: block; }
 
 /* Ambient edge-glow — an inset shadow ring around the whole screen that flashes then fades. */
 .glow {
@@ -121,10 +227,10 @@ html, body {
 .stage-box.ok .stage-safe { border-color: #34c759; }
 .stage-instr { font-size: 3.4vh; font-weight: 700; text-align: center; max-width: 80vw; }
 
-/* In-round "come back" nudges */
+/* In-round "come back" nudges — top-left, clear of the right rail (portrait) and bottom rail (landscape). */
 .guard {
-  position: absolute; top: 16vh; right: 4vw; z-index: 7;
-  display: flex; flex-direction: column; gap: 1.2vh; align-items: flex-end; pointer-events: none;
+  position: absolute; top: 4vh; left: 4vw; z-index: 7;
+  display: flex; flex-direction: column; gap: 1.2vh; align-items: flex-start; pointer-events: none;
 }
 .guard .nudge {
   display: flex; align-items: center; gap: 1vw;

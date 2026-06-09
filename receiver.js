@@ -2,24 +2,27 @@
  * DanceNow custom Cast receiver — the "TV app."
  *
  * The TV is the big shared screen: it plays the song (and is the authoritative clock the phone syncs
- * to), renders the COACH figure from a pose timeline the phone streams, and shows all feedback (edge-
- * glow + a rating word + tone + scoreboard). The phone is the camera/scorer; it never
- * overlays anything on a player here, which is the whole point of the second-screen design.
+ * to), shows the COACH (a drawn figure / the user's silent clip / a platform embed) in a constrained
+ * STAGE, and renders feedback in a RAIL beside (portrait) or under (landscape) the video — a Just-Dance
+ * "now / next move" pictogram filmstrip + per-player score chips + a tasteful rating flash. We NEVER draw
+ * feedback on top of the video (licensing/ToS). The phone is the camera/scorer.
  *
- * Browser preview (NO Chromecast): open  receiver/index.html?mock=1  in Chrome to see the coach
- * animate + feedback fire (click once to enable sound — browser autoplay policy).
+ * Browser preview (NO Chromecast): open  receiver/index.html?mock=1  in Chrome (DNTestMoves/DNTestOrient/
+ * DNTestDebug to exercise the rail). Add ?debug=1 for the dev reference-pose overlay.
  *
  * Namespace urn:x-cast:com.dancenow.sync
- *   phone → TV   { t:'load', audioUrl, mirrored, chunks }     then { t:'pose', frames:[{t,j}] } × chunks
- *   phone → TV   { t:'loadEmbed', provider, videoID, mirrored }   // TV plays the platform video (its own sound)
- *   phone → TV   { t:'loadVideo', videoUrl, audioUrl, mirrored }  // TV plays the user's silent clip + catalog mp3
- *   phone → TV   { t:'cmd', cmd:'play'|'pause'|'stop' }
- *   phone → TV   { t:'feedback', lane, rating, points, gold, at }   // at = target TV-playhead (sec)
+ *   phone → TV   { t:'load', audioUrl, mirrored, chunks, moveChunks, aspectW, aspectH, orient }  then { t:'pose', frames:[{t,j}] } × chunks
+ *   phone → TV   { t:'loadEmbed', provider, videoID, mirrored, moveChunks, orient }   // TV plays the platform video
+ *   phone → TV   { t:'loadVideo', videoUrl, audioUrl, mirrored, moveChunks, aspectW, aspectH, orient }  // silent clip + catalog mp3
+ *   phone → TV   { t:'moves', moves:[{i,t,gold,j}] } × moveChunks   // one-shot move pictograms (TV advances by playhead)
+ *   phone → TV   { t:'cmd', cmd:'play'|'pause'|'stop'|'debug', on? }
+ *   phone → TV   { t:'feedback', lane, rating, points, gold, at, idx }   // at = target TV-playhead (sec); idx = checkpoint
  *   phone → TV   { t:'score', scores:[{lane,total,combo}] }
  *   phone → TV   { t:'final', players:[{lane,total,stars}] }   // round over → big final-score reveal
  *   phone → TV   { t:'getready', n }  ·  { t:'go' }            // "Get Ready" countdown on the TV
  *   phone → TV   { t:'framing', state:'setup'|'paused', instr, players:[{lane,ok,j}] }  // Set up your stage
  *   phone → TV   { t:'guard', lane, state:'grace'|'nudge'|'rejoin'|'ok', ring }  // in-round "come back" nudge
+ *   phone → TV   { t:'dbgpose', j, bones }   // DEV-ONLY: reference pose + per-bone match for the debug overlay
  *   phone → TV   { t:'ping', id, cs }
  *   TV → phone   { t:'ph', rt, ts, st, seq }  ·  { t:'pong', id, cs, rs }  ·  { t:'ready' }
  */
@@ -45,9 +48,29 @@
   var guardEl = document.getElementById('guard');
   var statusEl = document.getElementById('status');
 
+  // Stage + rail (the split layout). The coach lives in #videostage; feedback lives in #rail.
+  var videostageEl = document.getElementById('videostage');
+  var railEl = document.getElementById('rail');
+  var railScoresEl = document.getElementById('railscores');
+  var filmstripEl = document.getElementById('filmstrip');
+  var dbgCanvas = document.getElementById('dbgskeleton');
+  var dbgCtx = dbgCanvas ? dbgCanvas.getContext('2d') : null;
+
+  // Move filmstrip: the checkpoint key-poses ("now / next" pictograms), sent once at load. The TV advances
+  // the strip itself off the playhead (no per-frame streaming). nowIndex = the current move (last arrived).
+  var moves = [];
+  var moveChunks = 0;
+  var recvMoveChunks = 0;
+  var movesReady = false;
+  var nowIndex = 0;
+  var lastDrawnNow = -1;
+  var tiles = [];            // [{el, canvas, ctx, kicker, badge, hairFill, plus}] — 4 tiles
+  var chipEls = {};          // lane → {el, sc, cb}
+  var dbgLive = null;        // dev-only: { j:{joint:[x,y]}, bones:[..] } streamed when debug is on
+
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun5-video8';
+  var BUILD = 'jun9-rail1';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -101,9 +124,58 @@
     return audio.currentTime || 0;
   }
 
-  function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+  // The coach canvas (+ debug overlay) now fill the STAGE box, not the window.
+  function sizeStageCanvases() {
+    if (!videostageEl) return;
+    var w = videostageEl.clientWidth, h = videostageEl.clientHeight;
+    if (w && h) {
+      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+      if (dbgCanvas && (dbgCanvas.width !== w || dbgCanvas.height !== h)) { dbgCanvas.width = w; dbgCanvas.height = h; }
+    }
+  }
+  function resize() { sizeStageCanvases(); if (movesReady) renderFilmstrip(); }
   window.addEventListener('resize', resize);
-  resize();
+
+  // Layout switches: orientation (portrait → side rail, landscape → bottom rail) + coach mode.
+  function applyOrientation(orient) {
+    var o = (orient === 'landscape' || orient === 'square') ? 'landscape' : 'portrait';
+    document.body.classList.remove('orient-portrait', 'orient-landscape');
+    document.body.classList.add('orient-' + o);
+    sizeStageCanvases();
+    if (movesReady) renderFilmstrip();   // tiles were resized by the new layout
+  }
+  function setMode(m) {
+    document.body.classList.remove('mode-figure', 'mode-video', 'mode-embed');
+    document.body.classList.add('mode-' + m);
+  }
+  function orientFrom(d) {
+    if (d.aspectW && d.aspectH && d.aspectW > 0 && d.aspectH > 0) {
+      var r = d.aspectW / d.aspectH;
+      return r > 1.05 ? 'landscape' : (r < 0.95 ? 'portrait' : 'square');
+    }
+    return d.orient || null;
+  }
+
+  // Build the 4 filmstrip tiles once (NOW + next 3).
+  function buildTiles() {
+    if (!filmstripEl || tiles.length) return;
+    for (var i = 0; i < 4; i++) {
+      var el = document.createElement('div'); el.className = 'tile';
+      var cv = document.createElement('canvas');
+      var kicker = document.createElement('div'); kicker.className = 'kicker';
+      var badge = document.createElement('div'); badge.className = 'badge'; badge.textContent = '★'; badge.style.display = 'none';
+      var hair = document.createElement('div'); hair.className = 'hair';
+      var hairFill = document.createElement('i'); hair.appendChild(hairFill);
+      var plus = document.createElement('div'); plus.className = 'plus';
+      el.appendChild(cv); el.appendChild(kicker); el.appendChild(badge); el.appendChild(hair); el.appendChild(plus);
+      filmstripEl.appendChild(el);
+      tiles.push({ el: el, canvas: cv, ctx: cv.getContext('2d'), kicker: kicker, badge: badge, hairFill: hairFill, plus: plus });
+    }
+  }
+
+  document.body.classList.add('orient-portrait');   // a sane default until a routine reports its aspect
+  buildTiles();
+  sizeStageCanvases();
 
   // ---- Audio: ONE WebAudio graph for music + tone feedback ----
   // The music (HTML <audio>) is routed THROUGH the AudioContext (createMediaElementSource → musicGain →
@@ -238,17 +310,139 @@
     wordEl.style.transform = 'scale(1.0) translateY(-50px)';
   }
 
-  function renderScores(scores) {
-    if (!scores || !scores.length) { scoresEl.innerHTML = ''; return; }
-    var html = '';
+  // Per-player score chips in the rail. Built once per lane then updated IN PLACE, so a flash class isn't
+  // wiped by the next 0.4s score update.
+  function renderChips(scores) {
+    if (!railScoresEl || !scores || !scores.length) return;
     for (var i = 0; i < scores.length; i++) {
-      var s = scores[i];
-      html += '<div class="chip"><div class="p">P' + (s.lane + 1) + '</div>'
-        + '<div class="sc">' + Math.round(s.total) + '</div>'
-        + (s.combo > 1 ? '<div class="cb">x' + s.combo + '</div>' : '')
-        + '</div>';
+      var s = scores[i], lane = s.lane || 0;
+      var C = chipEls[lane];
+      if (!C) {
+        var el = document.createElement('div'); el.className = 'rchip';
+        el.innerHTML = '<div class="p">P' + (lane + 1) + '</div><div class="sc">0</div><div class="cb"></div>';
+        railScoresEl.appendChild(el);
+        C = chipEls[lane] = { el: el, sc: el.querySelector('.sc'), cb: el.querySelector('.cb') };
+      }
+      C.sc.textContent = Math.round(s.total);
+      C.cb.textContent = (s.combo > 1) ? ('x' + s.combo) : '';
     }
-    scoresEl.innerHTML = html;
+  }
+  function clearChips() { if (railScoresEl) railScoresEl.innerHTML = ''; chipEls = {}; }
+  function flashChip(lane, rating, gold) {
+    var C = chipEls[lane]; if (!C) return;
+    C.el.style.setProperty('--fc', tierColor(rating, gold));
+    C.el.classList.remove('flash', 'bump'); void C.el.offsetWidth;
+    C.el.classList.add('flash', 'bump');
+    setTimeout(function () { C.el.classList.remove('flash'); }, 420);
+  }
+
+  // ---- Move filmstrip (Just-Dance "now / next" pictograms) ----
+  // Draw one key-pose centered + fit to the tile (bbox-fit like drawFigure, in unit-square space so a tall
+  // standing pose fills a portrait tile). Mirror-matched to the on-screen video.
+  function drawMoveTile(c, joints, W, H, mir, isNow, gold) {
+    c.clearRect(0, 0, W, H);
+    var minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9, any = false;
+    for (var n in joints) {
+      if (!joints.hasOwnProperty(n)) continue;
+      var p = joints[n]; if (!p) continue;
+      if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0];
+      if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1];
+      any = true;
+    }
+    if (!any) return;
+    var pbw = Math.max(0.001, maxX - minX), pbh = Math.max(0.001, maxY - minY);
+    var s = Math.min(W * 0.84 / pbw, H * 0.84 / pbh);
+    var ccx = (minX + maxX) / 2, ccy = (minY + maxY) / 2;
+    function map(p) { var x = W / 2 + (p[0] - ccx) * s; if (mir) x = W - x; return [x, H / 2 + (p[1] - ccy) * s]; }
+    var color = gold ? '#ffd400' : (isNow ? '#ffffff' : '#f2f2f7');
+    var lw = Math.max(2, H * (isNow ? 0.05 : 0.04));
+    c.lineCap = 'round'; c.lineJoin = 'round'; c.lineWidth = lw; c.strokeStyle = color;
+    for (var i = 0; i < bones.length; i++) {
+      var a = joints[bones[i][0]], b = joints[bones[i][1]];
+      if (!a || !b) continue;
+      var ma = map(a), mb = map(b);
+      c.beginPath(); c.moveTo(ma[0], ma[1]); c.lineTo(mb[0], mb[1]); c.stroke();
+    }
+    var head = joints.nose || joints.neck;
+    if (head) { var mh = map(head); c.fillStyle = color; c.beginPath(); c.arc(mh[0], mh[1], lw * 1.25, 0, 2 * Math.PI); c.fill(); }
+  }
+
+  function renderFilmstrip() {
+    if (!tiles.length) return;
+    for (var i = 0; i < tiles.length; i++) {
+      var T = tiles[i];
+      var mv = moves[nowIndex + i];
+      T.el.className = 'tile' + (i === 0 ? ' now' : ' dim' + (i + 1));
+      if (!mv) { T.el.style.visibility = 'hidden'; continue; }
+      T.el.style.visibility = '';
+      if (mv.gold) { T.el.classList.add('gold'); T.badge.style.display = ''; } else { T.badge.style.display = 'none'; }
+      T.kicker.textContent = i === 0 ? 'NOW' : (i === 1 ? 'NEXT' : '');
+      var w = T.el.clientWidth, h = T.el.clientHeight;
+      if (w && h && (T.canvas.width !== w || T.canvas.height !== h)) { T.canvas.width = w; T.canvas.height = h; }
+      if (T.canvas.width) drawMoveTile(T.ctx, mv.j, T.canvas.width, T.canvas.height, mirrored, i === 0, mv.gold);
+    }
+  }
+
+  function onMoves(d) {
+    if (d.moves && d.moves.length) { for (var i = 0; i < d.moves.length; i++) moves.push(d.moves[i]); }
+    recvMoveChunks += 1;
+    if (moveChunks > 0 && recvMoveChunks >= moveChunks) {
+      moves.sort(function (a, b) { return a.t - b.t; });
+      movesReady = moves.length > 0;
+      nowIndex = 0; lastDrawnNow = -1;
+      if (filmstripEl) filmstripEl.style.display = movesReady ? '' : 'none';
+      renderFilmstrip();
+    }
+  }
+
+  // Tasteful rating flash in the rail (replaces the full-screen glow + word): pulse the move tile that was
+  // just judged + float a +NN; miss = a small shake. The exact tile comes from the checkpoint idx.
+  function flashTile(idx, rating, gold, points) {
+    if (!tiles.length) return;
+    var offset = (typeof idx === 'number' && idx >= 0) ? (idx - nowIndex) : 0;
+    if (offset < 0 || offset > 3) offset = 0;   // retired / unknown → flash NOW
+    var T = tiles[offset];
+    var col = tierColor(rating, gold);
+    T.el.style.setProperty('--fc', col);
+    T.el.classList.remove('flash', 'shake'); void T.el.offsetWidth;
+    if (rating === 'miss') { T.el.classList.add('shake'); }
+    else { T.el.classList.add('flash'); setTimeout(function () { T.el.classList.remove('flash'); }, 460); }
+    if (points && rating !== 'miss' && T.plus) {
+      T.plus.textContent = '+' + points; T.plus.style.color = col;
+      T.plus.classList.remove('go'); void T.plus.offsetWidth; T.plus.classList.add('go');
+    }
+  }
+
+  // ---- Dev-only debug overlay: the reference pose drawn ON the clip (alignment/mirror/sync + bone match) ----
+  function setDebug(on) {
+    document.body.classList.toggle('debug', !!on);
+    if (!on && dbgCtx && dbgCanvas) dbgCtx.clearRect(0, 0, dbgCanvas.width, dbgCanvas.height);
+  }
+  function onDbgPose(d) { dbgLive = d; }
+  function matchColor(m) { if (m == null || m < 0) return '#39ff14'; if (m >= 0.7) return '#34c759'; if (m >= 0.4) return '#ffd400'; return '#ff453a'; }
+  function drawDebug() {
+    if (!dbgCtx || !dbgCanvas || !dbgLive || !dbgLive.j) return;
+    var W = dbgCanvas.width, H = dbgCanvas.height;
+    dbgCtx.clearRect(0, 0, W, H);
+    // The reference pose is normalized to the recording frame; map it to the video's letterboxed content
+    // rect (object-fit:contain) so it lands on the dancer. Embed/figure → whole stage box (approximate).
+    var rx = 0, ry = 0, rw = W, rh = H;
+    if (videoMode && videoEl && videoEl.videoWidth && videoEl.videoHeight) {
+      var sc = Math.min(W / videoEl.videoWidth, H / videoEl.videoHeight);
+      rw = videoEl.videoWidth * sc; rh = videoEl.videoHeight * sc; rx = (W - rw) / 2; ry = (H - rh) / 2;
+    }
+    var j = dbgLive.j, bm = dbgLive.bones || [];
+    function map(p) { var nx = mirrored ? (1 - p[0]) : p[0]; return [rx + nx * rw, ry + p[1] * rh]; }
+    var lw = Math.max(2, rh * 0.012);
+    dbgCtx.lineCap = 'round'; dbgCtx.lineWidth = lw;
+    for (var i = 0; i < bones.length; i++) {
+      var a = j[bones[i][0]], b = j[bones[i][1]]; if (!a || !b) continue;
+      dbgCtx.strokeStyle = matchColor(bm[i]);
+      var ma = map(a), mb = map(b);
+      dbgCtx.beginPath(); dbgCtx.moveTo(ma[0], ma[1]); dbgCtx.lineTo(mb[0], mb[1]); dbgCtx.stroke();
+    }
+    var head = j.nose || j.neck;
+    if (head) { var mh = map(head); dbgCtx.fillStyle = '#39ff14'; dbgCtx.beginPath(); dbgCtx.arc(mh[0], mh[1], lw * 1.3, 0, 2 * Math.PI); dbgCtx.fill(); }
   }
 
   // ---- Final-score reveal (end of a cast round): big, exact total in sync with the phone ----
@@ -470,6 +664,23 @@
       if (f) drawFigure(f.j);
     }
 
+    // Advance the move filmstrip off the playhead (the TV is the master clock → no per-frame streaming).
+    // Freezes automatically on pause (currentPlayhead() stops). Only redraw tiles when NOW changes.
+    if (movesReady && moves.length) {
+      var ph = currentPlayhead();
+      while (nowIndex + 1 < moves.length && ph >= moves[nowIndex + 1].t) nowIndex++;
+      if (nowIndex !== lastDrawnNow) { renderFilmstrip(); lastDrawnNow = nowIndex; }
+      if (tiles.length && tiles[0].hairFill) {
+        var t0 = moves[nowIndex].t;
+        var t1 = (nowIndex + 1 < moves.length) ? moves[nowIndex + 1].t : (t0 + 1);
+        var frac = (t1 > t0) ? (ph - t0) / (t1 - t0) : 0;
+        tiles[0].hairFill.style.width = (Math.max(0, Math.min(1, frac)) * 100).toFixed(1) + '%';
+      }
+    }
+
+    // Dev-only reference-pose overlay (no-op unless debug is on + a dbgpose has arrived).
+    if (document.body.classList.contains('debug')) drawDebug();
+
     // Video mode: the silent clip is the master clock — keep the catalog mp3 locked to it.
     if (videoMode && videoEl && !videoEl.paused && audio && !audio.paused) {
       if (Math.abs((audio.currentTime || 0) - (videoEl.currentTime || 0)) > 0.25) {
@@ -509,10 +720,20 @@
     videoPlaying = false;
   }
 
+  // Reset the move filmstrip + score chips for a new routine, and switch the layout (mode + orientation).
+  function resetMoves(d) {
+    moves = []; moveChunks = d.moveChunks || 0; recvMoveChunks = 0; movesReady = false;
+    nowIndex = 0; lastDrawnNow = -1;
+    if (filmstripEl) filmstripEl.style.display = 'none';
+    clearChips();
+  }
+
   function onLoad(d) {
     clearPendingFeedback();
     hideFinal(); clearGuards();
     exitVideoMode();
+    if (embedEl) { embedEl.style.display = 'none'; embedEl.innerHTML = ''; }
+    embedMode = false;
     canvas.style.display = '';
     poseFrames = [];
     receivedChunks = 0;
@@ -520,6 +741,9 @@
     mirrored = d.mirrored !== false;
     loaded = false;
     mockMode = false;
+    resetMoves(d);
+    setMode('figure');
+    applyOrientation('portrait');   // the drawn coach is a tall standing figure → portrait stage + side rail
     if (d.audioUrl) { audio.src = d.audioUrl; audio.load(); }
     resumeAudio();
     setStatus('loading routine…');
@@ -538,9 +762,20 @@
     if (!videoEl) videoEl = document.getElementById('castvideo');
     canvas.style.display = 'none';
     videoMode = true; videoPlaying = false;
+    var orientHint = orientFrom(d);
+    resetMoves(d);
+    setMode('video');
+    applyOrientation(orientHint || 'portrait');
     videoEl.style.display = 'block';
     videoEl.style.transform = mirrored ? 'scaleX(-1)' : 'none';
     videoEl.muted = true;
+    videoEl.addEventListener('loadedmetadata', function () {   // refine orientation from the real clip dims
+      if (!orientHint && videoEl.videoWidth && videoEl.videoHeight) {
+        var r = videoEl.videoWidth / videoEl.videoHeight;
+        applyOrientation(r > 1.05 ? 'landscape' : (r < 0.95 ? 'portrait' : 'square'));
+      }
+      sizeStageCanvases();
+    }, { once: true });
     videoEl.onended = function () {
       videoPlaying = false;
       document.body.classList.remove('playing');
@@ -564,6 +799,10 @@
     if (!embedEl) embedEl = document.getElementById('embed');
     embedEl.innerHTML = '';
     embedEl.style.display = 'block';
+    mirrored = d.mirrored !== false;
+    resetMoves(d);
+    setMode('embed');
+    applyOrientation(orientFrom(d) || 'portrait');   // embed can't be measured → trust the phone's hint
     resumeAudio();
     setStatus('loading video…');
     if (d.provider === 'youtube') buildYouTube(d.videoID);
@@ -708,8 +947,11 @@
         audio.pause();
         audio.currentTime = 0;
       }
+      nowIndex = 0; lastDrawnNow = -1;   // a fresh re-dance previews move #1 again
       document.body.classList.remove('playing');
       setStatus('ready');
+    } else if (d.cmd === 'debug') {
+      setDebug(d.on);
     }
   }
 
@@ -728,8 +970,10 @@
     // and never disappears. good/ok/miss don't duck at all (their tone cuts through on its own).
     if (d.gold && d.rating !== 'miss') duck(0.7, 0.4);
     else if (d.rating === 'perfect') duck(0.8, 0.25);
-    // Over an embedded player we must not draw overlays (platform ToS) → audio-only feedback there.
-    if (!embedMode) { pulseGlow(d.rating, d.gold); showWord(d.rating, d.gold, d.points); }
+    // Rail feedback in EVERY mode — flash the move tile just judged + the player's score chip. We never
+    // draw over the video (licensing/ToS); the old full-screen glow + centered word are retired.
+    flashTile(d.idx, d.rating, d.gold, d.points);
+    flashChip(d.lane || 0, d.rating, d.gold);
   }
 
   function onFeedback(d) {
@@ -755,14 +999,16 @@
         case 'loadEmbed': onLoadEmbed(d); break;
         case 'loadVideo': onLoadVideo(d); break;
         case 'pose': onPose(d); break;
+        case 'moves': onMoves(d); break;
         case 'cmd': onCmd(d); break;
         case 'feedback': onFeedback(d); break;
-        case 'score': renderScores(d.scores); break;
+        case 'score': renderChips(d.scores); break;
         case 'final': onFinal(d); break;
         case 'getready': onGetReady(d); break;
         case 'go': onGo(d); break;
         case 'framing': onFraming(d); break;
         case 'guard': onGuard(d); break;
+        case 'dbgpose': onDbgPose(d); break;
         default: break;
       }
     });
@@ -802,6 +1048,17 @@
     };
   }
 
+  // Synthetic move pictograms for the browser (varied poses, every 4th a gold Star Move), spaced to fit
+  // within the mock playhead loop.
+  function mockMoves(n) {
+    n = n || 12;
+    var arr = [];
+    for (var i = 0; i < n; i++) {
+      arr.push({ i: i, t: 0.5 + i * 0.6, gold: (i % 4 === 3), j: standingJoints(0.2 + (i % 5) * 0.45) });
+    }
+    return arr;
+  }
+
   function setupMock() {
     poseFrames = [];
     for (var k = 0; k < 8 * 15; k++) {
@@ -812,18 +1069,36 @@
     mirrored = true;
     mockMode = true;
     mockStart = now();
+    setMode('figure');
+    applyOrientation('portrait');
+    moveChunks = 1; recvMoveChunks = 0; moves = [];
+    onMoves({ moves: mockMoves(12) });   // light up the filmstrip
     document.body.classList.add('playing');
     setStatus('MOCK preview (click to enable sound)');
     var tiers = [['perfect', false, 100], ['good', false, 60], ['ok', false, 30], ['perfect', true, 300], ['miss', false, 0]];
-    var total = 0, combo = 0;
+    var totals = [0, 0], combos = [0, 0];
     setInterval(function () {
-      var x = pick(tiers);
-      onFeedback({ rating: x[0], gold: x[1], points: x[2], lane: 0 });
-      combo = x[0] === 'miss' ? 0 : combo + 1;
-      total += x[2];
-      renderScores([{ lane: 0, total: total, combo: combo }]);
+      for (var lane = 0; lane < 2; lane++) {
+        var x = pick(tiers);
+        onFeedback({ rating: x[0], gold: x[1], points: x[2], lane: lane, idx: nowIndex });
+        combos[lane] = x[0] === 'miss' ? 0 : combos[lane] + 1;
+        totals[lane] += x[2];
+      }
+      renderChips([{ lane: 0, total: totals[0], combo: combos[0] }, { lane: 1, total: totals[1], combo: combos[1] }]);
     }, 1300);
-    // Browser-only dev hooks (mock): preview the cast-UX overlays.
+    // Browser-only dev hooks (mock): preview the rail + cast-UX overlays.
+    window.DNTestMoves = function (n) { moveChunks = 1; recvMoveChunks = 0; moves = []; nowIndex = 0; lastDrawnNow = -1; onMoves({ moves: mockMoves(n || 12) }); };
+    window.DNTestOrient = function (o) { applyOrientation(o || 'portrait'); };
+    window.DNTestDebug = function (on) {
+      setDebug(on !== false);
+      if (window._dbgTimer) { clearInterval(window._dbgTimer); window._dbgTimer = null; }
+      if (on === false) return;
+      window._dbgTimer = setInterval(function () {
+        var a = (Math.sin(now() * 1.6) * 0.5 + 0.5) * (Math.PI / 2);
+        var bm = []; for (var i = 0; i < 14; i++) bm.push(Math.random());
+        onDbgPose({ j: standingJoints(a), bones: bm });
+      }, 60);
+    };
     window.DNTestFinal = function (p) { onFinal({ players: p || [{ lane: 0, total: 2910, stars: 4 }] }); };
     window.DNTestGetReady = function (n) { onGetReady({ n: n == null ? 3 : n }); };
     window.DNTestGo = function () { onGo(); };
@@ -844,6 +1119,7 @@
   }
 
   if (location.search.indexOf('mock') >= 0) setupMock();
+  if (location.search.indexOf('debug') >= 0) setDebug(true);   // dev reference-pose overlay (off in production)
 
   requestAnimationFrame(frame);
 })();
