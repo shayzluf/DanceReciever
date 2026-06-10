@@ -47,6 +47,7 @@
   var stageCtx = stageCanvas ? stageCanvas.getContext('2d') : null;
   var guardEl = document.getElementById('guard');
   var statusEl = document.getElementById('status');
+  var lobbyEl = document.getElementById('lobby');
 
   // Stage + rail (the split layout). The coach lives in #videostage; feedback lives in #rail.
   var videostageEl = document.getElementById('videostage');
@@ -70,7 +71,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun9-rail3';
+  var BUILD = 'jun10-qr';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -121,6 +122,10 @@
   function now() { return performance.now() / 1000; }
   function setStatus(t) { if (statusEl) statusEl.textContent = t; }
   function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+  // Idle install QR (In-Room QR loop): shown when nothing is happening, hidden the moment a phone
+  // starts any routine activity (see the message listener) and restored on stop / disconnect.
+  function showLobby() { if (lobbyEl) lobbyEl.style.display = 'flex'; }
+  function hideLobby() { if (lobbyEl) lobbyEl.style.display = 'none'; }
 
   // The authoritative playhead the phone syncs to: embed time (embed), the silent clip's time (video),
   // else the song's time.
@@ -980,6 +985,7 @@
       }
       nowIndex = 0; lastDrawnNow = -1;   // a fresh re-dance previews move #1 again
       document.body.classList.remove('playing');
+      showLobby();                        // back to idle → bring back the install QR
       setStatus('ready');
     } else if (d.cmd === 'debug') {
       setDebug(d.on);
@@ -1027,6 +1033,7 @@
     context.addCustomMessageListener(NS, function (event) {
       var d = event.data || {};
       senders[event.senderId] = true;
+      if (d.t && d.t !== 'ping' && d.t !== 'pong') hideLobby();   // any routine activity → drop the idle QR
       switch (d.t) {
         case 'ping': try { context.sendCustomMessage(NS, event.senderId, { t: 'pong', id: d.id, cs: d.cs, rs: now() }); } catch (e) {} break;
         case 'load': onLoad(d); break;
@@ -1053,6 +1060,7 @@
     });
     context.addEventListener(cast.framework.system.EventType.SENDER_DISCONNECTED, function (e) {
       delete senders[e.senderId];
+      if (Object.keys(senders).length === 0) showLobby();   // phone left → back to the idle install QR
     });
   }
 
@@ -1094,6 +1102,7 @@
   }
 
   function setupMock() {
+    hideLobby();
     poseFrames = [];
     for (var k = 0; k < 8 * 15; k++) {
       var t = k / 15;
@@ -1152,6 +1161,7 @@
     } catch (e) { /* not in a Cast environment (e.g. browser preview) */ }
   }
 
+  showLobby();   // idle screen: the install QR until a phone starts a routine
   if (location.search.indexOf('mock') >= 0) setupMock();
   if (location.search.indexOf('debug') >= 0) setDebug(true);   // dev reference-pose overlay (off in production)
 

@@ -264,3 +264,22 @@ body.orient-landscape .tile.now { height: 92%; }
 
 /* Hide the brand/status once a routine is playing. */
 body.playing .hud { opacity: 0; transition: opacity 0.6s ease; }
+
+/* ============================================================================
+   Idle LOBBY — the bystander-acquisition QR (In-Room QR loop). Full-screen,
+   shown only when no routine is active; JS toggles display.
+   ============================================================================ */
+.lobby {
+  position: absolute; inset: 0; z-index: 9;
+  display: none; flex-direction: column; align-items: center; justify-content: center; gap: 3vh;
+  background: radial-gradient(120vh 120vh at 50% 38%, #15131f 0%, #0b0b12 72%);
+}
+.lobby-brand {
+  font-size: 7vh; font-weight: 900; letter-spacing: 0.02em;
+  background: linear-gradient(92deg, #ff5ca8, #6a8bff 70%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.lobby-head { font-size: 3vh; font-weight: 700; opacity: 0.9; }
+.lobby-qr { background: #fff; padding: 2.4vh; border-radius: 2.4vh; box-shadow: 0 1.5vh 5vh rgba(0, 0, 0, 0.5); }
+.lobby-qr img { display: block; width: 34vh; height: 34vh; image-rendering: pixelated; }
+.lobby-cta { font-size: 2.4vh; font-weight: 700; opacity: 0.85; letter-spacing: 0.02em; }
