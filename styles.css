@@ -283,3 +283,6 @@ body.playing .hud { opacity: 0; transition: opacity 0.6s ease; }
 .lobby-qr { background: #fff; padding: 2.4vh; border-radius: 2.4vh; box-shadow: 0 1.5vh 5vh rgba(0, 0, 0, 0.5); }
 .lobby-qr img { display: block; width: 34vh; height: 34vh; image-rendering: pixelated; }
 .lobby-cta { font-size: 2.4vh; font-weight: 700; opacity: 0.85; letter-spacing: 0.02em; }
+/* Caster guidance under the bystander CTA: dim while waiting, green once a phone is linked. */
+.lobby-status { margin-top: 1.2vh; font-size: 2vh; font-weight: 600; opacity: 0.55; }
+.lobby-status.ok { color: #34c759; opacity: 0.95; }

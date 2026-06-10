@@ -48,6 +48,7 @@
   var guardEl = document.getElementById('guard');
   var statusEl = document.getElementById('status');
   var lobbyEl = document.getElementById('lobby');
+  var lobbyStatusEl = document.getElementById('lobbystatus');
 
   // Stage + rail (the split layout). The coach lives in #videostage; feedback lives in #rail.
   var videostageEl = document.getElementById('videostage');
@@ -71,7 +72,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun10-qr';
+  var BUILD = 'jun11-lobby';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -124,8 +125,24 @@
   function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
   // Idle install QR (In-Room QR loop): shown when nothing is happening, hidden the moment a phone
   // starts any routine activity (see the message listener) and restored on stop / disconnect.
-  function showLobby() { if (lobbyEl) lobbyEl.style.display = 'flex'; }
+  // The QR is for the BYSTANDERS; the status line beneath it is for the CASTER (waiting vs "you're
+  // connected — pick a song"), so the idle screen never reads as a dead end to the person who cast.
+  function updateLobbyStatus() {
+    if (!lobbyStatusEl) return;
+    var connected = Object.keys(senders).length > 0;
+    lobbyStatusEl.textContent = connected
+      ? 'Phone connected — pick a song and hit Dance!'
+      : 'Dancing? Open Floored on your phone and tap the Cast button';
+    lobbyStatusEl.classList.toggle('ok', connected);
+  }
+  function showLobby() { updateLobbyStatus(); if (lobbyEl) lobbyEl.style.display = 'flex'; }
   function hideLobby() { if (lobbyEl) lobbyEl.style.display = 'none'; }
+  // Browser-preview hook: fake N connected phones and refresh the lobby line (no Cast SDK in a tab).
+  window.DNTestLobbySenders = function (n) {
+    senders = {};
+    for (var i = 0; i < (n || 0); i++) senders['dev' + i] = true;
+    updateLobbyStatus();
+  };
 
   // The authoritative playhead the phone syncs to: embed time (embed), the silent clip's time (video),
   // else the song's time.
@@ -1057,10 +1074,12 @@
     context.addEventListener(cast.framework.system.EventType.SENDER_CONNECTED, function (e) {
       senders[e.senderId] = true;
       setStatus('phone connected');
+      updateLobbyStatus();   // idle screen flips to "connected — pick a song"
     });
     context.addEventListener(cast.framework.system.EventType.SENDER_DISCONNECTED, function (e) {
       delete senders[e.senderId];
       if (Object.keys(senders).length === 0) showLobby();   // phone left → back to the idle install QR
+      else updateLobbyStatus();
     });
   }
 
