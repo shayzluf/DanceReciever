@@ -72,7 +72,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun11-lobby';
+  var BUILD = 'jun11-audiomix';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -142,6 +142,28 @@
     senders = {};
     for (var i = 0; i < (n || 0); i++) senders['dev' + i] = true;
     updateLobbyStatus();
+  };
+  // Audio diagnostics + a feedback-storm driver (browser sims of the duck envelope; harmless on TV).
+  // `graph:false` after a play means createMediaElementSource failed → tones live OUTSIDE the music
+  // stream (on Cast hardware they then steal output focus and cut the music on every effect).
+  window.DNTestAudioState = function () {
+    return {
+      graph: !!musicGain,
+      ctx: actx ? actx.state : 'none',
+      gain: musicGain ? musicGain.gain.value : null,
+      vol: audio ? audio.volume : null,
+      seeking: !!(audio && audio.seeking),
+      t: audio ? (audio.currentTime || 0) : 0
+    };
+  };
+  window.DNTestFeedbackStorm = function (seconds, perSecond) {
+    var tiers = [['perfect', false], ['good', false], ['perfect', true], ['ok', false], ['miss', false]];
+    var n = 0, max = Math.max(1, Math.round((seconds || 10) * (perSecond || 3)));
+    var iv = setInterval(function () {
+      var x = tiers[n % tiers.length];
+      onFeedback({ rating: x[0], gold: x[1], points: 100, lane: n % 2, idx: 0 });
+      if (++n >= max) clearInterval(iv);
+    }, 1000 / (perSecond || 3));
   };
 
   // The authoritative playhead the phone syncs to: embed time (embed), the silent clip's time (video),
@@ -272,48 +294,42 @@
   // WebAudio tones are the audio feedback; they mix with the music without stealing focus.
 
   // Smooth, gentle music ducking via short volume ramps (no hard jump → no click/pop). Always restores
-  // to full, and the latest duck wins, so rapid feedback can never leave the music stuck quiet.
-  var duckToken = 0;
-  var duckRamp = null;
-  function rampMusic(target, ms) {
-    var dur = Math.max(0.02, ms / 1000);
-    // Preferred: ramp the WebAudio musicGain (sample-accurate, no click).
-    if (musicGain && actx) {
-      var t = actx.currentTime, cur = musicGain.gain.value;
-      musicGain.gain.cancelScheduledValues(t);
-      musicGain.gain.setValueAtTime(cur, t);
-      musicGain.gain.linearRampToValueAtTime(target, t + dur);
-      return;
-    }
-    // Fallback (graph not built): ramp the element volume.
-    if (!audio) return;
-    if (duckRamp) { clearInterval(duckRamp); duckRamp = null; }
-    var from = audio.volume, t0 = now();
-    duckRamp = setInterval(function () {
-      var k = Math.min(1, (now() - t0) / dur);
-      audio.volume = Math.max(0, Math.min(1, from + (target - from) * k));
-      if (k >= 1) { clearInterval(duckRamp); duckRamp = null; }
-    }, 16);
-  }
-  function duck(level, holdSeconds) {
-    rampMusic(level, 70);
-    duckToken += 1;
-    var token = duckToken;
-    setTimeout(function () { if (token === duckToken) rampMusic(1.0, 220); }, holdSeconds * 1000);
-  }
+  // to full, and the latest duck wins, so rapid feedback can never leave the music stuck quiet. The
+  // mechanics live in audio-mix.js (FlooredAudioMix) so they're unit-tested (receiver/test/); the
+  // ducker also owns the post-play settle window (SETTLE_NO_DUCK) during which ducks are ignored.
+  var ducker = window.FlooredAudioMix.createDucker({
+    now: now,
+    gain: function () { return musicGain ? musicGain.gain : null; },   // graph builds lazily on play
+    gainTime: function () { return actx ? actx.currentTime : 0; },
+    getVolume: function () { return audio ? audio.volume : 1; },
+    setVolume: function (v) { if (audio) audio.volume = v; }
+  }, { settleNoDuck: SETTLE_NO_DUCK });
+
+  function duck(level, holdSeconds) { ducker.duck(level, holdSeconds); }
+
+  // Video-mode audio↔video sync corrections go through this guard (audio-mix.js): never re-seek while
+  // a seek is in flight, and rate-limit corrections. The old per-frame `drift > 0.3 → re-seek` became
+  // a ~60fps seek storm once one seek was in flight (audio.currentTime lags the assignment, so the
+  // drift test stayed true) — the mp3 stayed muted for the rest of the round while the WebAudio
+  // feedback tones kept playing ("music disappears after the start, the effects keep sounding").
+  var syncGuard = window.FlooredAudioMix.createSyncGuard({
+    threshold: 0.3, settleSeconds: SETTLE_NO_SYNC, cooldownSeconds: 1.2
+  });
 
   // Start playback with the music quiet, then ramp it up — establishes the track smoothly instead of
-  // popping in over a still-settling clip. Also stamps playStartedAt for the settle window.
+  // popping in over a still-settling clip. Stamps playStartedAt for the settle windows (the ducker
+  // keeps its own stamp via fadeIn). Also refreshes the build stamp with audio diagnostics readable
+  // on the TV itself: 'no-graph' = createMediaElementSource failed (CORS / unsupported) → the tones
+  // play OUTSIDE the music stream, and on Cast hardware they then steal output focus and CUT the
+  // music on every effect; 'actx-…' = the AudioContext never reached 'running'.
   function startMusicFadeIn() {
     playStartedAt = now();
-    if (musicGain && actx) {
-      var t = actx.currentTime;
-      musicGain.gain.cancelScheduledValues(t);
-      musicGain.gain.setValueAtTime(0.2, t);
-    } else if (audio) {
-      audio.volume = 0.2;
+    ducker.fadeIn();
+    if (buildEl) {
+      buildEl.textContent = 'build ' + BUILD +
+        (musicGain ? '' : ' · no-graph') +
+        (actx && actx.state !== 'running' ? ' · actx-' + actx.state : '');
     }
-    rampMusic(1.0, 480);
   }
 
   // ---- Feedback visuals ----
@@ -731,12 +747,19 @@
     // Dev-only reference-pose overlay (no-op unless debug is on + a dbgpose has arrived).
     if (document.body.classList.contains('debug')) drawDebug();
 
-    // Video mode: the silent clip is the master clock — keep the catalog mp3 locked to it. Skip the first
-    // ~1.5s (decoders still settling) so we don't re-seek the mp3 repeatedly — that was the start stutter.
-    if (videoMode && videoEl && !videoEl.paused && audio && !audio.paused && (now() - playStartedAt) > SETTLE_NO_SYNC) {
-      if (Math.abs((audio.currentTime || 0) - (videoEl.currentTime || 0)) > 0.3) {
-        try { audio.currentTime = videoEl.currentTime; } catch (e) { /* not seekable yet */ }
-      }
+    // Video mode: the silent clip is the master clock — keep the catalog mp3 locked to it. All the
+    // "when may we re-seek" rules (settle window, never while a seek is in flight, cooldown between
+    // audible corrections) live in syncGuard — see its creation above for the seek-storm history.
+    if (videoMode && videoEl && audio) {
+      var seekTo = syncGuard.check({
+        enabled: !videoEl.paused && !audio.paused,
+        sincePlay: now() - playStartedAt,
+        audioTime: audio.currentTime || 0,
+        videoTime: videoEl.currentTime || 0,
+        seeking: !!audio.seeking,
+        now: now()
+      });
+      if (seekTo != null) { try { audio.currentTime = seekTo; } catch (e) { /* not seekable yet */ } }
     }
 
     // Beacon the playhead so the phone can score (figure, embed, and video modes; never in mock).
@@ -813,6 +836,7 @@
     if (!videoEl) videoEl = document.getElementById('castvideo');
     canvas.style.display = 'none';
     videoMode = true; videoPlaying = false;
+    syncGuard.reset();   // new round → may correct again right after its own settle window
     var orientHint = orientFrom(d);
     resetMoves(d);
     setMode('video');
@@ -1021,12 +1045,11 @@
   function presentFeedback(d) {
     toneTier(d.rating, d.gold);
     // Gentle, brief duck only on the prominent moments so the tone pops — the music stays clearly audible
-    // and never disappears. good/ok/miss don't duck at all (their tone cuts through on its own). And NOT in
-    // the first ~0.9s: ducking before the track establishes made early feedback "take over" at cast start.
-    if ((now() - playStartedAt) > SETTLE_NO_DUCK) {
-      if (d.gold && d.rating !== 'miss') duck(0.7, 0.4);
-      else if (d.rating === 'perfect') duck(0.8, 0.25);
-    }
+    // and never disappears. good/ok/miss don't duck at all (their tone cuts through on its own). The
+    // first ~0.9s after play is suppressed by the ducker itself (settle window — early feedback must
+    // not "take over" before the track establishes).
+    if (d.gold && d.rating !== 'miss') duck(0.7, 0.4);
+    else if (d.rating === 'perfect') duck(0.8, 0.25);
     // Rail feedback in EVERY mode — flash the move tile just judged + the player's score chip. We never
     // draw over the video (licensing/ToS); the old full-screen glow + centered word are retired.
     flashTile(d.idx, d.rating, d.gold, d.points);

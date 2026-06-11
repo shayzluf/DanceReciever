@@ -16,7 +16,15 @@ rating words, scoreboard).
 |------|------|
 | `index.html` | receiver shell — `<audio>` clock, coach `<canvas>`, glow/word/scoreboard, loads the CAF SDK |
 | `receiver.js` | renders the coach, plays the song, handles the `urn:x-cast:com.dancenow.sync` channel, beacons its playhead |
+| `audio-mix.js` | audio-mix policies: music ducking under feedback tones (always restores to full) + the video-mode re-seek guard (the seek-storm fix). Dependency-injected so the behavior is unit-tested |
 | `styles.css` | TV layout |
+| `test/` | Node simulation tests for `audio-mix.js` — `node --test receiver/test/audio-mix.test.js` (no deps). Pins the duck envelope under feedback storms and reproduces the old seek storm vs the guard |
+
+Audio diagnostics on the TV: after play, the build stamp (bottom-right) appends `· no-graph` when
+the music couldn't be routed into the WebAudio graph (CORS/unsupported — the tones then steal output
+focus on Cast hardware and cut the music on every effect) and `· actx-<state>` when the AudioContext
+isn't running. In a browser, `DNTestAudioState()` returns `{graph, ctx, gain, vol, seeking}` and
+`DNTestFeedbackStorm(seconds, perSecond)` drives a storm to watch the duck envelope live.
 
 ## Preview in a browser (no Chromecast)
 
