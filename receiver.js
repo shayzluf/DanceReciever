@@ -80,7 +80,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun12-castpolish';
+  var BUILD = 'jun12-thicklines';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -512,8 +512,13 @@
     var core = opt.core || TOK.skeleton.core;     // near-white tube core
     var jcol = opt.joint || TOK.skeleton.joint;   // magenta nodes
     var k = opt.k || 1;
-    var coreW = Math.max(1.2, span * 0.012) * k;
+    // Limb line width from the shared token (design-tokens.json — same knob as the app). Joint + head
+    // sizes are DECOUPLED from it (fixed ratios of figure height) so widening the line never grows the
+    // joint circles.
+    var coreW = Math.max(1.2, span * ((TOK.skeleton && TOK.skeleton.strokeWidthRatio) || 0.016)) * k;
     var midW = coreW * 3, wideW = coreW * 6;
+    var jointR = Math.max(1.5, span * 0.018) * k;   // articulation node radius (was coreW * 1.5)
+    var headR = Math.max(3, span * 0.031) * k;      // head ring radius (was coreW * 2.6)
 
     // Violet floor pool — anchors the figure to a stage (additive ellipse under the lowest joint).
     if (opt.ground) {
@@ -554,16 +559,16 @@
       var p = P[NEON_NODES[j]]; if (!p) continue;
       c.save();
       c.globalCompositeOperation = 'lighter'; c.globalAlpha = 0.9; c.fillStyle = jcol;
-      c.beginPath(); c.arc(p[0], p[1], coreW * 1.5, 0, 2 * Math.PI); c.fill();
+      c.beginPath(); c.arc(p[0], p[1], jointR, 0, 2 * Math.PI); c.fill();
       c.restore();
       c.fillStyle = '#ffffff';
-      c.beginPath(); c.arc(p[0], p[1], coreW * 0.6, 0, 2 * Math.PI); c.fill();
+      c.beginPath(); c.arc(p[0], p[1], jointR * 0.4, 0, 2 * Math.PI); c.fill();
     }
 
     // Head as a RING (faint inner fill + additive glow ring + core ring).
     var head = P.nose || P.neck;
     if (head) {
-      var hr = coreW * 2.6;
+      var hr = headR;
       c.save(); c.globalAlpha = 0.12; c.fillStyle = core;
       c.beginPath(); c.arc(head[0], head[1], hr, 0, 2 * Math.PI); c.fill(); c.restore();
       c.save(); c.globalCompositeOperation = 'lighter'; c.globalAlpha = 0.5;
