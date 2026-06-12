@@ -6,7 +6,7 @@
    no regression). Served from the receiver origin, so it loads on the Cast device exactly as locally. */
 @font-face {
   font-family: "Floored Rounded";
-  src: url("nunito-vf.woff2?v=jun12-thicklines") format("woff2");
+  src: url("nunito-vf.woff2?v=jun12-finalfix") format("woff2");
   font-weight: 200 1000;
   font-display: swap;
 }
@@ -89,6 +89,14 @@ body.orient-portrait #videostage { left: 12vw; width: 40vw; top: 0; height: 100v
 body.orient-portrait #rail { left: 55vw; width: 31vw; top: 0; height: 100vh; }
 body.orient-portrait #filmstrip { flex-direction: column; }
 
+/* Figure/video portrait: the drawn coach (or the user's own clip) is the hero, so CENTRE it on screen
+   with a slimmer right rail — the old 12vw-left / 40vw split read as off-centre. Embed mode keeps the
+   base split (the platform iframe owns the stage, and its beacons/rail are positioned off it). */
+body.orient-portrait.mode-figure #videostage,
+body.orient-portrait.mode-video #videostage { left: 28vw; width: 44vw; }
+body.orient-portrait.mode-figure #rail,
+body.orient-portrait.mode-video #rail { left: 74vw; width: 24vw; }
+
 /* Landscape clip → top stage + bottom rail; horizontal filmstrip. */
 body.orient-landscape #videostage { left: 0; width: 100vw; top: 0; height: 62vh; }
 body.orient-landscape #rail { left: 0; width: 100vw; top: 62vh; height: 38vh; }
@@ -167,6 +175,9 @@ body.orient-landscape .tile.now { height: 96%; }
    top inset gives the rising "+N" popup room before the screen edge and stops the row jamming the bezel. */
 body.orient-portrait #beacons { left: 12vw; width: 40vw; top: 2.6vh; height: 8vh; }
 body.orient-landscape #beacons { left: 20vw; width: 60vw; top: 2.6vh; height: 9vh; }
+/* Figure/video portrait: match the centred stage above (beacons stay over the coach's headroom). */
+body.orient-portrait.mode-figure #beacons,
+body.orient-portrait.mode-video #beacons { left: 28vw; width: 44vw; }
 
 /* Embed: the platform player owns the stage — beacons sit just past its edge instead. */
 body.mode-embed.orient-landscape #beacons { left: 0; width: 100vw; top: 63vh; height: 9vh; }
@@ -350,6 +361,14 @@ body.mode-embed.orient-portrait .beacon .bscore { font-size: 4vh; }
 .final-scores.n4 .final-num { font-size: 8.6vh; }
 .final-scores.n4 .final-stars { font-size: 2.9vh; }
 .final-scores.n4 .final-lane { font-size: 2.2vh; }
+/* Entrance pop. CRITICAL: the resting state of .final-scores is opacity 1 (visible) — the cards pop in
+   via this animation, NOT an inline opacity 0→1 transition (which could stick at 0 on a slow Cast device,
+   hiding every score while only the FINAL title showed). If the animation never runs, the cards still show. */
+@keyframes finalpop {
+  0% { opacity: 0; transform: scale(0.6); }
+  100% { opacity: 1; transform: scale(1); }
+}
+.final-scores.pop { animation: finalpop 0.55s cubic-bezier(.2, .9, .2, 1.25); }
 
 /* "Get Ready" countdown — a focal moment: a darkening radial scrim recedes the coach/filmstrip while
    the beacon roll-call (top) stays legible, and the brand-gradient numeral carries a pink neon glow. */

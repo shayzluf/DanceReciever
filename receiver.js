@@ -80,7 +80,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun12-thicklines';
+  var BUILD = 'jun12-finalfix';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -719,13 +719,15 @@
         + '<div class="final-stars">' + stars + '</div></div>';
     }
     if (wrap) {
-      wrap.className = 'final-scores n' + Math.min(4, count) + (players.length > 1 ? ' multi' : '');
+      // Pop the cards in via a CSS animation whose RESTING state is visible (opacity 1). The old inline
+      // opacity 0→1 transition could stick at 0 on a slow Cast device → scores invisible (only the FINAL
+      // title showed). Clear any legacy inline styles, then re-trigger the animation class with a reflow.
+      wrap.style.opacity = ''; wrap.style.transform = ''; wrap.style.transition = '';
       wrap.innerHTML = html;
+      wrap.className = 'final-scores n' + Math.min(4, count) + (players.length > 1 ? ' multi' : '');
       finalEl.style.display = 'flex';
-      wrap.style.transition = 'none'; wrap.style.transform = 'scale(0.6)'; wrap.style.opacity = '0';
       void wrap.offsetWidth;
-      wrap.style.transition = 'transform 0.55s cubic-bezier(.2,.9,.2,1.25), opacity 0.4s ease';
-      wrap.style.transform = 'scale(1)'; wrap.style.opacity = '1';
+      wrap.classList.add('pop');
     } else {
       finalEl.style.display = 'flex';
     }
