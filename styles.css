@@ -1,12 +1,48 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+/* Bundled rounded display face — the app is SF Pro Rounded everywhere; Chromecast has no rounded
+   system font, so we self-host Nunito (variable, all weights) to carry the SAME brand voice on the TV.
+   font-display:swap → if a flaky device never fetches it, text still renders in system-ui (today's look,
+   no regression). Served from the receiver origin, so it loads on the Cast device exactly as locally. */
+@font-face {
+  font-family: "Floored Rounded";
+  src: url("nunito-vf.woff2?v=jun12-castpolish") format("woff2");
+  font-weight: 200 1000;
+  font-display: swap;
+}
+
+/* The shared PALETTE tokens (--bg, the --ink/--cyan/--magenta/--violet skeleton set, the
+   --pink/--blue/--green/--orange lanes, --gold, --warning, --tier-*) come from
+   design-tokens.generated.css — generated from /design-tokens.json, the SAME source the Swift app reads.
+   Below are receiver-only COMPOSITE surfaces (faux glass / hairline), not part of the brand palette. */
+:root {
+  --glass: rgba(18, 18, 28, 0.62);     /* faux frosted card fill */
+  --glass-strong: rgba(13, 13, 22, 0.82);
+  --hair: rgba(255, 255, 255, 0.12);   /* = Theme.hairline (white 12%) */
+}
+
 html, body {
   width: 100%;
   height: 100%;
-  background: #000;
+  background: var(--bg);
   overflow: hidden;
-  font-family: -apple-system, "SF Pro Display", system-ui, sans-serif;
+  font-family: "Floored Rounded", -apple-system, "SF Pro Rounded", system-ui, sans-serif;
   color: #fff;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Subtle "nightlife" depth behind the rail/beacons (the video stage paints its own true black on top,
+   so letterboxing stays pure). A single static radial — no per-frame cost. */
+body::before {
+  content: "";
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background: radial-gradient(120vh 90vh at 50% 26%, #16131f 0%, var(--bg) 68%);
+}
+
+/* Reusable brand wordmark gradient (pink→blue), used by the lobby, countdown, final title. */
+.brandtext {
+  background: linear-gradient(92deg, var(--pink), var(--blue) 70%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
 }
 
 /* ============================================================================
@@ -57,23 +93,24 @@ body.orient-portrait #filmstrip { flex-direction: column; }
 body.orient-landscape #videostage { left: 0; width: 100vw; top: 0; height: 62vh; }
 body.orient-landscape #rail { left: 0; width: 100vw; top: 62vh; height: 38vh; }
 body.orient-landscape #filmstrip { flex-direction: row; }
-body.orient-landscape #railscores { justify-content: center; }
 
 /* ---- Move filmstrip tiles (Just-Dance "now / next" pictograms) ---- */
 .tile {
   position: relative;
   flex: 0 0 auto;
-  background: rgba(255, 255, 255, 0.05);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.01) 60%), rgba(18, 18, 28, 0.5);
+  border: 0.18vh solid var(--hair);
   border-radius: 1.6vh;
   overflow: hidden;
   transition: transform 0.16s cubic-bezier(.2, .9, .2, 1.2), opacity 0.16s ease, box-shadow 0.2s ease;
 }
-/* Portrait: stack 4 tiles → size by HEIGHT (vh) so they fit the column; width follows the 3:4 aspect. */
-body.orient-portrait .tile { height: 16vh; aspect-ratio: 3 / 4; }
-body.orient-portrait .tile.now { height: 23vh; }
+/* Portrait: stack 4 tiles → size by HEIGHT (vh) so they fit the column; width follows the 3:4 aspect.
+   (+10% vs the chip era — the rail's sole occupant now is choreography.) */
+body.orient-portrait .tile { height: 17.5vh; aspect-ratio: 3 / 4; }
+body.orient-portrait .tile.now { height: 25vh; }
 /* Landscape: a row of tiles → size by HEIGHT of the strip; width follows the aspect. */
-body.orient-landscape .tile { height: 66%; aspect-ratio: 3 / 4; }
-body.orient-landscape .tile.now { height: 92%; }
+body.orient-landscape .tile { height: 72%; aspect-ratio: 3 / 4; }
+body.orient-landscape .tile.now { height: 96%; }
 .tile canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .tile.dim2 { opacity: 0.78; }
 .tile.dim3 { opacity: 0.6; }
@@ -82,9 +119,13 @@ body.orient-landscape .tile.now { height: 92%; }
   position: absolute; top: 0.6vh; left: 0; right: 0; text-align: center;
   font-size: 1.5vh; font-weight: 800; letter-spacing: 0.14em; opacity: 0.65;
 }
-.tile.now { background: rgba(255, 255, 255, 0.11); }
+.tile.now {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.02) 60%), rgba(22, 22, 34, 0.62);
+  border-color: rgba(255, 255, 255, 0.22);
+  box-shadow: 0 1.4vh 3.4vh rgba(0, 0, 0, 0.5), inset 0 0.18vh 0 rgba(255, 255, 255, 0.22);
+}
 .tile.now .kicker { color: #fff; opacity: 0.95; }
-.tile .badge { position: absolute; top: 0.5vh; right: 0.7vw; color: #ffd400; font-size: 2.2vh; text-shadow: 0 0 1vh rgba(255, 212, 0, 0.6); }
+.tile .badge { position: absolute; top: 0.5vh; right: 0.7vw; color: var(--gold); font-size: 2.2vh; text-shadow: 0 0 1vh rgba(255, 212, 0, 0.6); }
 .tile.gold { box-shadow: inset 0 0 0 0.3vh rgba(255, 212, 0, 0.85), 0 0 2.6vh rgba(255, 212, 0, 0.3); }
 .tile.gold.now { animation: goldring 1.2s ease-in-out infinite; }
 /* progress hairline under NOW — fills across the interval to the next move (continuous "approach"). */
@@ -92,11 +133,11 @@ body.orient-landscape .tile.now { height: 92%; }
 .tile.now .hair { display: block; }
 .tile .hair > i { display: block; height: 100%; width: 0%; background: #f2f2f7; border-radius: 0.5vh; }
 /* rating flash on the retiring tile */
-.tile.flash { box-shadow: inset 0 0 0 0.4vh var(--fc, #34c759), 0 0 3vh var(--fc, #34c759); }
+.tile.flash { box-shadow: inset 0 0 0 0.4vh var(--fc, var(--tier-perfect)), 0 0 3vh var(--fc, var(--tier-perfect)); }
 .tile.shake { animation: tshake 0.32s ease; }
 .tile .plus {
   position: absolute; left: 0; right: 0; top: 38%; text-align: center;
-  font-size: 3vh; font-weight: 900; color: var(--fc, #34c759); opacity: 0;
+  font-size: 3vh; font-weight: 900; color: var(--fc, var(--tier-perfect)); opacity: 0;
   text-shadow: 0 2px 10px rgba(0, 0, 0, 0.7); pointer-events: none;
 }
 .tile .plus.go { animation: plusfloat 0.7s ease-out; }
@@ -107,19 +148,117 @@ body.orient-landscape .tile.now { height: 92%; }
 @keyframes plusfloat { 0% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; transform: translateY(-3vh); } }
 @keyframes tshake { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-0.8vw); } 75% { transform: translateX(0.8vw); } }
 
-/* ---- Rail score chips (per player) ---- */
-.railscores { display: flex; gap: 1.4vw; flex-wrap: wrap; justify-content: center; flex: 0 0 auto; }
-.rchip {
-  min-width: 8vw; text-align: center; background: rgba(255, 255, 255, 0.06);
-  border: 0.25vh solid transparent; border-radius: 1.4vh; padding: 1vh 1.2vw;
-  transition: border-color 0.25s ease, transform 0.18s ease;
+/* ============================================================================
+   BEACONS — one pill per player: lane dot (identity) + score + combo/cue +
+   presence (SEEN bright / FIX dimmed / LOST hollow + STEP IN). Parked on the
+   stage's TOP EDGE in figure/video modes (our content — overlays allowed);
+   embed mode shifts them the minimum legal distance off the platform player.
+   Chromecast budget: nodes are created once per round; all animation is
+   transform/opacity; the only text mutations are score tick steps.
+   ============================================================================ */
+#beacons {
+  position: fixed; z-index: 6; display: none;
+  flex-direction: row; align-items: center; justify-content: center;
+  gap: 0.8vw; pointer-events: none;
 }
-.rchip .p { font-size: 1.7vh; font-weight: 700; opacity: 0.8; }
-.rchip .sc { font-size: 3.4vh; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.05; }
-.rchip .cb { font-size: 1.8vh; font-weight: 800; color: #ffd400; min-height: 2vh; }
-.rchip.flash { border-color: var(--fc, #34c759); }
-.rchip.bump .cb { animation: cbbump 0.3s ease; }
-@keyframes cbbump { 0%,100% { transform: scale(1); } 40% { transform: scale(1.4); } }
+#beacons.show { display: flex; }
+
+/* Figure/video: overlay the stage's top edge (headroom = dead space, never the body/footwork). A small
+   top inset gives the rising "+N" popup room before the screen edge and stops the row jamming the bezel. */
+body.orient-portrait #beacons { left: 12vw; width: 40vw; top: 2.6vh; height: 8vh; }
+body.orient-landscape #beacons { left: 20vw; width: 60vw; top: 2.6vh; height: 9vh; }
+
+/* Embed: the platform player owns the stage — beacons sit just past its edge instead. */
+body.mode-embed.orient-landscape #beacons { left: 0; width: 100vw; top: 63vh; height: 9vh; }
+body.mode-embed.orient-landscape #rail { top: 73vh; height: 27vh; }
+body.mode-embed.orient-portrait #beacons {
+  left: 55.5vw; width: 11vw; top: 0; height: 100vh;
+  flex-direction: column; gap: 1.6vh;
+}
+body.mode-embed.orient-portrait #rail { left: 68vw; width: 21vw; }
+body.mode-embed.orient-portrait .tile { height: 13vh; }
+body.mode-embed.orient-portrait .tile.now { height: 18vh; }
+
+.beacon {
+  /* --lc lane color, --lcdim its 50%, --lcglow its glow, --fc transient tier color (JS-set). */
+  position: relative; display: flex; align-items: center; gap: 0.9vw;
+  height: 100%; padding: 0 1.5vw; border-radius: 100vh;
+  /* Faux frosted glass: dark fill + a top-edge sheen so it reads as a lit pane (Chromecast can't
+     afford backdrop-filter on live elements — this is a static gradient, free). */
+  background: linear-gradient(176deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0) 44%), var(--glass);
+  border: 0.32vh solid var(--lc, #fff);
+  box-shadow: 0 0 2.6vh var(--lcglow, transparent),
+              0 1.2vh 3vh rgba(0, 0, 0, 0.45),
+              inset 0 0.15vh 0 rgba(255, 255, 255, 0.18);
+  transition: border-color 0.4s linear, background-color 0.4s linear, box-shadow 0.4s linear;
+}
+body.mode-embed.orient-portrait .beacon { height: 8vh; padding: 0 0.9vw; gap: 0.5vw; }
+
+.beacon .bwash {  /* judged-moment tier wash (opacity-only) */
+  position: absolute; inset: 0; border-radius: inherit;
+  background: var(--fc, var(--tier-perfect)); opacity: 0;
+}
+.beacon.flash .bwash { animation: bwash 0.28s ease-out; }
+.beacon.flash.gold .bwash { animation: bwashgold 0.6s ease-out; }
+@keyframes bwash { 0% { opacity: 0.18; } 100% { opacity: 0; } }
+@keyframes bwashgold { 0% { opacity: 0.3; } 100% { opacity: 0; } }
+.beacon.bump { animation: bbump 0.26s cubic-bezier(.34, 1.56, .64, 1); }
+@keyframes bbump { 0%, 100% { transform: scale(1); } 45% { transform: scale(1.06); } }
+.beacon.enter { animation: benter 0.35s cubic-bezier(.2, .9, .2, 1.25) both; }
+@keyframes benter { 0% { transform: scale(0.6); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+
+.beacon .bdot {
+  position: relative; flex: 0 0 auto; width: 2.8vh; height: 2.8vh; border-radius: 50%;
+  background: var(--lc, #fff);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.8vh; font-weight: 800; color: #fff;
+}
+.beacon .bring {  /* guard rejoin ring around the dot (conic fill 0–100, JS-set --p) */
+  position: absolute; inset: -0.7vh; border-radius: 50%;
+  background: conic-gradient(var(--lc, #fff) calc(var(--p, 0) * 1%), transparent 0);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 0.5vh), #000 calc(100% - 0.4vh));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 0.5vh), #000 calc(100% - 0.4vh));
+}
+.beacon .bscore {
+  font-size: 6.5vh; font-weight: 800; line-height: 1;
+  font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, 0.95);
+  transition: color 0.4s linear;
+}
+body.orient-portrait .beacon .bscore { font-size: 6vh; }
+#beacons.many .beacon .bscore { font-size: 5vh; }
+body.mode-embed.orient-portrait .beacon .bscore { font-size: 4vh; }
+.beacon .bslot {  /* reserved: combo ×N normally; the FIX cue takes it over (no reflow) */
+  min-width: 3.6vh; text-align: center;
+  font-size: 3.2vh; font-weight: 800; color: var(--gold);
+}
+.beacon .bslot.cue { color: var(--warning); animation: bcue 0.66s ease-in-out infinite; }
+@keyframes bcue { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+.beacon .bstep {  /* LOST: the score's spot says how to come back */
+  display: none; font-size: 4vh; font-weight: 900; color: var(--warning); white-space: nowrap;
+  animation: bcue 1s ease-in-out infinite;
+}
+.beacon .bplus {  /* "+N" born at the beacon, rising (replaces the rail-tile float as the score cue) */
+  position: absolute; left: 50%; top: -0.6vh;
+  font-size: 3.2vh; font-weight: 900; color: var(--fc, var(--tier-perfect));
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.7); opacity: 0; white-space: nowrap;
+}
+.beacon .bplus.go { animation: bplusfloat 0.6s ease-out; }
+@keyframes bplusfloat {
+  0% { opacity: 1; transform: translate(-50%, 0.6vh) scale(0.85); }
+  12% { transform: translate(-50%, 0) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -3.4vh) scale(1); }
+}
+
+/* FIX: dimmed = "score frozen", the cue pulses in the slot. */
+.beacon.fix { border-color: var(--lcdim, rgba(255, 255, 255, 0.5)); box-shadow: none; }
+.beacon.fix .bscore { color: rgba(255, 255, 255, 0.6); }
+
+/* LOST: hollow breathing dot, faded pill, STEP IN takes the score's place. */
+.beacon.lost { background: rgba(11, 11, 18, 0.35); border-color: var(--lcdim, rgba(255, 255, 255, 0.35)); box-shadow: none; }
+.beacon.lost .bdot { background: transparent; border: 0.3vh solid var(--lc, #fff); color: transparent; animation: bbreathe 1.2s ease-in-out infinite; }
+.beacon.lost .bscore, .beacon.lost .bslot { display: none; }
+.beacon.lost .bstep { display: block; }
+@keyframes bbreathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.12); } }
 
 #coach { display: block; }
 
@@ -150,28 +289,9 @@ body.orient-landscape .tile.now { height: 92%; }
   text-shadow: 0 4px 24px rgba(0, 0, 0, 0.8);
 }
 
-.scores {
-  position: absolute;
-  top: 4vh;
-  right: 4vw;
-  z-index: 7;
-  display: flex;
-  gap: 1.6vw;
-}
-
-.scores .chip {
-  min-width: 9vw;
-  text-align: center;
-  background: rgba(0, 0, 0, 0.45);
-  border-radius: 1.4vh;
-  padding: 1.2vh 1.4vw;
-}
-
-.scores .p { font-size: 1.8vh; font-weight: 700; opacity: 0.85; }
-.scores .sc { font-size: 3.4vh; font-weight: 800; font-variant-numeric: tabular-nums; }
-.scores .cb { font-size: 1.8vh; color: #ffd400; }
-
-/* Big end-of-round score reveal (shown over a frozen last frame). */
+/* Big end-of-round score reveal (shown over a frozen, blurred last frame). One glass card per player —
+   lane-colored frame + dot (identity) + white hero score + gold stars — echoing the app's ResultsView.
+   Sizes step down by player count so 1–4 players always fit the 16:9 frame without overflow. */
 .final {
   position: absolute;
   inset: 0;
@@ -180,67 +300,94 @@ body.orient-landscape .tile.now { height: 92%; }
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2vh;
-  background: rgba(0, 0, 0, 0.55);
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
+  gap: 4.5vh;
+  background: rgba(7, 7, 12, 0.8);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
 }
-.final-title { font-size: 4vh; font-weight: 800; letter-spacing: 0.3em; opacity: 0.8; }
-.final-scores { display: flex; gap: 7vw; align-items: flex-end; }
-.final-player { text-align: center; }
-.final-lane { font-size: 3vh; font-weight: 700; opacity: 0.8; margin-bottom: 0.5vh; }
-.final-num {
-  font-size: 19vh; font-weight: 900; line-height: 0.95; font-variant-numeric: tabular-nums;
-  background: linear-gradient(92deg, #ff5ca8, #6a8bff 70%);
+.final-title {
+  font-size: 4.6vh; font-weight: 900; letter-spacing: 0.18em;
+  background: linear-gradient(92deg, var(--pink), var(--blue) 70%);
   -webkit-background-clip: text; background-clip: text; color: transparent;
 }
-.final-stars { font-size: 5vh; color: #ffd400; letter-spacing: 0.15em; }
+.final-scores {
+  display: flex; gap: 2vw; align-items: stretch; justify-content: center;
+  width: 94vw; max-width: 94vw;
+}
+.final-player {
+  flex: 1 1 0; min-width: 0; max-width: 42vw; overflow: hidden;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.6vh;
+  padding: 3.4vh 2vw;
+  border-radius: 2.6vh;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0) 50%), var(--glass);
+  border: 0.32vh solid var(--lc, var(--hair));
+  box-shadow: 0 0 4.5vh var(--lcglow, transparent), 0 2vh 5vh rgba(0, 0, 0, 0.5),
+              inset 0 0.2vh 0 rgba(255, 255, 255, 0.16);
+}
+/* Winner: a touch larger with a gold-warmed glow (single player → no highlight). */
+.final-scores.multi .final-player.win {
+  box-shadow: 0 0 5.5vh var(--lcglow, transparent), 0 0 3vh rgba(255, 212, 0, 0.35),
+              0 2vh 5vh rgba(0, 0, 0, 0.5), inset 0 0.2vh 0 rgba(255, 255, 255, 0.2);
+  transform: scale(1.05);
+}
+.final-lane {  /* identity chip: lane dot + Pn */
+  display: flex; align-items: center; gap: 0.7vw;
+  font-size: 2.6vh; font-weight: 800; color: var(--lc, #fff); letter-spacing: 0.03em;
+}
+.final-lane .dot { width: 1.9vh; height: 1.9vh; border-radius: 50%; background: var(--lc, #fff); flex: 0 0 auto; }
+.final-num {
+  font-size: 14vh; font-weight: 900; line-height: 0.92; font-variant-numeric: tabular-nums;
+  color: #fff; white-space: nowrap;
+}
+.final-stars { font-size: 4.2vh; color: var(--gold); letter-spacing: 0.08em; white-space: nowrap; }
+/* Step the hero sizes down as players are added — keeps everything inside the frame. */
+.final-scores.n1 .final-num { font-size: 21vh; }
+.final-scores.n1 .final-stars { font-size: 6vh; }
+.final-scores.n2 .final-num { font-size: 15vh; }
+.final-scores.n2 .final-stars { font-size: 4.6vh; }
+.final-scores.n3 .final-num { font-size: 11vh; }
+.final-scores.n3 .final-stars { font-size: 3.6vh; }
+.final-scores.n4 .final-num { font-size: 8.6vh; }
+.final-scores.n4 .final-stars { font-size: 2.9vh; }
+.final-scores.n4 .final-lane { font-size: 2.2vh; }
 
-/* "Get Ready" countdown */
+/* "Get Ready" countdown — a focal moment: a darkening radial scrim recedes the coach/filmstrip while
+   the beacon roll-call (top) stays legible, and the brand-gradient numeral carries a pink neon glow. */
 .getready {
   position: absolute; inset: 0; z-index: 10;
   display: none; align-items: center; justify-content: center;
-  background: rgba(0, 0, 0, 0.4);
+  background: radial-gradient(70vh 70vh at 50% 52%, rgba(7, 7, 12, 0.86) 0%, rgba(7, 7, 12, 0.52) 100%);
 }
 .gr-num {
   font-size: 40vh; font-weight: 900; line-height: 1; font-variant-numeric: tabular-nums;
-  background: linear-gradient(92deg, #ff5ca8, #6a8bff 70%);
+  background: linear-gradient(92deg, var(--pink), var(--blue) 70%);
   -webkit-background-clip: text; background-clip: text; color: transparent;
+  filter: drop-shadow(0 0 5vh rgba(255, 92, 168, 0.55)) drop-shadow(0 1.4vh 2vh rgba(0, 0, 0, 0.6));
 }
 
-/* "Set up your stage" framing / paused screen */
+/* "Set up your stage" framing / paused screen — full-bleed scrim (recedes the play layer) + a glass
+   "viewfinder" card holding the live skeleton inside a safe-zone, and one warm instruction. */
 .stage {
   position: absolute; inset: 0; z-index: 10;
-  display: none; flex-direction: column; align-items: center; justify-content: center; gap: 2.5vh;
-  background: rgba(0, 0, 0, 0.8);
+  display: none; flex-direction: column; align-items: center; justify-content: center; gap: 2.8vh;
+  background: rgba(7, 7, 12, 0.88);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
 }
-.stage-title { font-size: 4vh; font-weight: 800; letter-spacing: 0.04em; opacity: 0.95; }
+.stage-title { font-size: 4.2vh; font-weight: 900; letter-spacing: 0.02em; }
 .stage-box {
-  position: relative; height: 62vh; aspect-ratio: 9 / 16;
-  border-radius: 1.6vh; background: rgba(255, 255, 255, 0.05); overflow: hidden;
+  position: relative; height: 60vh; aspect-ratio: 9 / 16;
+  border-radius: 2.4vh; overflow: hidden;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0) 55%), var(--glass);
+  border: 0.22vh solid var(--hair);
+  box-shadow: 0 2.4vh 6vh rgba(0, 0, 0, 0.55), inset 0 0.2vh 0 rgba(255, 255, 255, 0.14);
 }
 .stage-box canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .stage-safe {
-  position: absolute; inset: 7%; border: 0.4vh dashed rgba(255, 255, 255, 0.35); border-radius: 1.2vh;
-  transition: border-color 0.3s ease;
+  position: absolute; inset: 7%; border: 0.4vh dashed rgba(255, 255, 255, 0.32); border-radius: 1.6vh;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
 }
-.stage-box.ok .stage-safe { border-color: #34c759; }
-.stage-instr { font-size: 3.4vh; font-weight: 700; text-align: center; max-width: 80vw; }
-
-/* In-round "come back" nudges — top-left, clear of the right rail (portrait) and bottom rail (landscape). */
-.guard {
-  position: absolute; top: 4vh; left: 4vw; z-index: 7;
-  display: flex; flex-direction: column; gap: 1.2vh; align-items: flex-start; pointer-events: none;
-}
-.guard .nudge {
-  display: flex; align-items: center; gap: 1vw;
-  background: rgba(255, 159, 10, 0.92); color: #1a1205; font-weight: 800; font-size: 2.4vh;
-  padding: 1vh 1.6vw; border-radius: 1.4vh;
-}
-.guard .ring {
-  width: 2.6vh; height: 2.6vh; border-radius: 50%;
-  background: conic-gradient(#1a1205 calc(var(--p, 0) * 1%), rgba(0, 0, 0, 0.22) 0);
-}
+.stage-box.ok .stage-safe { border-color: var(--green); box-shadow: 0 0 3vh rgba(52, 199, 89, 0.4); }
+.stage-instr { font-size: 3.4vh; font-weight: 800; text-align: center; max-width: 80vw; color: rgba(255, 255, 255, 0.95); }
 
 .hud {
   position: absolute;
@@ -254,7 +401,7 @@ body.orient-landscape .tile.now { height: 92%; }
   font-size: 3.2vh;
   font-weight: 800;
   letter-spacing: 0.04em;
-  background: linear-gradient(92deg, #ff5ca8, #6a8bff 70%);
+  background: linear-gradient(92deg, var(--pink), var(--blue) 70%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -272,11 +419,11 @@ body.playing .hud { opacity: 0; transition: opacity 0.6s ease; }
 .lobby {
   position: absolute; inset: 0; z-index: 9;
   display: none; flex-direction: column; align-items: center; justify-content: center; gap: 3vh;
-  background: radial-gradient(120vh 120vh at 50% 38%, #15131f 0%, #0b0b12 72%);
+  background: radial-gradient(120vh 120vh at 50% 38%, #15131f 0%, var(--bg) 72%);
 }
 .lobby-brand {
   font-size: 7vh; font-weight: 900; letter-spacing: 0.02em;
-  background: linear-gradient(92deg, #ff5ca8, #6a8bff 70%);
+  background: linear-gradient(92deg, var(--pink), var(--blue) 70%);
   -webkit-background-clip: text; background-clip: text; color: transparent;
 }
 .lobby-head { font-size: 3vh; font-weight: 700; opacity: 0.9; }
@@ -285,4 +432,4 @@ body.playing .hud { opacity: 0; transition: opacity 0.6s ease; }
 .lobby-cta { font-size: 2.4vh; font-weight: 700; opacity: 0.85; letter-spacing: 0.02em; }
 /* Caster guidance under the bystander CTA: dim while waiting, green once a phone is linked. */
 .lobby-status { margin-top: 1.2vh; font-size: 2vh; font-weight: 600; opacity: 0.55; }
-.lobby-status.ok { color: #34c759; opacity: 0.95; }
+.lobby-status.ok { color: var(--green); opacity: 0.95; }

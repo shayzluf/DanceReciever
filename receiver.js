@@ -17,7 +17,7 @@
  *   phone → TV   { t:'moves', moves:[{i,t,gold,j}] } × moveChunks   // one-shot move pictograms (TV advances by playhead)
  *   phone → TV   { t:'cmd', cmd:'play'|'pause'|'stop'|'debug', on? }
  *   phone → TV   { t:'feedback', lane, rating, points, gold, at, idx }   // at = target TV-playhead (sec); idx = checkpoint
- *   phone → TV   { t:'score', scores:[{lane,total,combo}] }
+ *   phone → TV   { t:'score', scores:[{lane,total,combo,seen,fix}] }   // seen:'ok'|'fix'|'lost' (+fix cue) → beacons
  *   phone → TV   { t:'final', players:[{lane,total,stars}] }   // round over → big final-score reveal
  *   phone → TV   { t:'getready', n }  ·  { t:'go' }            // "Get Ready" countdown on the TV
  *   phone → TV   { t:'framing', state:'setup'|'paused', instr, players:[{lane,ok,j}] }  // Set up your stage
@@ -29,6 +29,17 @@
 (function () {
   'use strict';
 
+  // Shared palette — generated from /design-tokens.json into window.FlooredTokens (index.html loads it
+  // before this file), the SAME source the Swift app reads via DesignTokens. The inline fallback is an
+  // emergency net only if that generated file failed to load (TV stays functional, just off-brand); the
+  // canonical values live in design-tokens.json — edit there + run scripts/gen-design-tokens.mjs.
+  var TOK = window.FlooredTokens || {
+    skeleton: { core: '#eafeff', glow: '#22d3ee', joint: '#f472b6', ground: '#a78bfa' },
+    lanes: ['#ff5ca8', '#6a8bff', '#34c759', '#ff9f0a'],
+    gold: '#ffd400', warning: '#ff9f0a', bg: '#0b0b12',
+    tiers: { perfect: '#34c759', good: '#30d158', ok: '#64d2ff', miss: '#ff453a', gold: '#ffd400' }
+  };
+
   var NS = 'urn:x-cast:com.dancenow.sync';
   var context = (window.cast && cast.framework) ? cast.framework.CastReceiverContext.getInstance() : null;
   var senders = {};
@@ -38,22 +49,20 @@
   var ctx = canvas.getContext('2d');
   var glowEl = document.getElementById('glow');
   var wordEl = document.getElementById('word');
-  var scoresEl = document.getElementById('scores');
   var finalEl = document.getElementById('final');
   var getreadyEl = document.getElementById('getready');
   var stageEl = document.getElementById('stage');
   var stageBox = stageEl ? stageEl.querySelector('.stage-box') : null;
   var stageCanvas = document.getElementById('stagecanvas');
   var stageCtx = stageCanvas ? stageCanvas.getContext('2d') : null;
-  var guardEl = document.getElementById('guard');
   var statusEl = document.getElementById('status');
   var lobbyEl = document.getElementById('lobby');
   var lobbyStatusEl = document.getElementById('lobbystatus');
 
-  // Stage + rail (the split layout). The coach lives in #videostage; feedback lives in #rail.
+  // Stage + rail (the split layout). The coach lives in #videostage; the rail's sole job now is the
+  // move filmstrip — scores/identity/presence live in the in-sightline #beacons layer.
   var videostageEl = document.getElementById('videostage');
   var railEl = document.getElementById('rail');
-  var railScoresEl = document.getElementById('railscores');
   var filmstripEl = document.getElementById('filmstrip');
   var dbgCanvas = document.getElementById('dbgskeleton');
   var dbgCtx = dbgCanvas ? dbgCanvas.getContext('2d') : null;
@@ -67,12 +76,11 @@
   var nowIndex = 0;
   var lastDrawnNow = -1;
   var tiles = [];            // [{el, canvas, ctx, kicker, badge, hairFill, plus}] — 4 tiles
-  var chipEls = {};          // lane → {el, sc, cb}
   var dbgLive = null;        // dev-only: { j:{joint:[x,y]}, bones:[..] } streamed when debug is on
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun11-audiomix';
+  var BUILD = 'jun12-castpolish';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -334,11 +342,12 @@
 
   // ---- Feedback visuals ----
   function tierColor(rating, gold) {
-    if (gold && rating !== 'miss') return '#ffd400';
-    if (rating === 'perfect') return '#34c759';
-    if (rating === 'good') return '#30d158';
-    if (rating === 'ok') return '#64d2ff';
-    return '#ff453a';
+    var t = TOK.tiers;
+    if (gold && rating !== 'miss') return t.gold;
+    if (rating === 'perfect') return t.perfect;
+    if (rating === 'good') return t.good;
+    if (rating === 'ok') return t.ok;
+    return t.miss;
   }
 
   function pulseGlow(rating, gold) {
@@ -369,35 +378,205 @@
     wordEl.style.transform = 'scale(1.0) translateY(-50px)';
   }
 
-  // Per-player score chips in the rail. Built once per lane then updated IN PLACE, so a flash class isn't
-  // wiped by the next 0.4s score update.
-  function renderChips(scores) {
-    if (!railScoresEl || !scores || !scores.length) return;
+  // ---- Beacons: one pill per player = lane dot (identity color) + score + combo/cue + presence.
+  // Nodes are created ONCE per lane and mutated in place (Chromecast: transform/opacity animations
+  // only; the sole text churn is the score roll, ≤5 steps per 0.4s wire update).
+  var LANE_COLORS = TOK.lanes;   // === Theme.laneColors / DesignTokens.lanes (one source: design-tokens.json)
+  var beaconsEl = document.getElementById('beacons');
+  var beacons = {};        // lane → {el, dot, ring, score, slot, step, plus, shown, target, tick, ringOn}
+  var framingLanes = [0];  // lanes seen on the framing screen → entrance roll-call at Get Ready
+
+  function laneColor(lane) { return LANE_COLORS[lane % LANE_COLORS.length]; }
+  function hexRGBA(h, a) {   // '#rrggbb' + alpha → 'rgba(r,g,b,a)'
+    return 'rgba(' + parseInt(h.slice(1, 3), 16) + ',' + parseInt(h.slice(3, 5), 16) + ','
+      + parseInt(h.slice(5, 7), 16) + ',' + a + ')';
+  }
+  function laneRGBA(lane, a) { return hexRGBA(laneColor(lane), a); }
+
+  function ensureBeacon(lane, enterDelayMs) {
+    var B = beacons[lane];
+    if (B) return B;
+    var el = document.createElement('div');
+    el.className = 'beacon';
+    el.style.setProperty('--lc', laneColor(lane));
+    el.style.setProperty('--lcdim', laneRGBA(lane, 0.5));
+    el.style.setProperty('--lcglow', laneRGBA(lane, 0.3));
+    el.innerHTML = '<i class="bwash"></i>'
+      + '<div class="bdot"><i class="bring"></i><span>' + (lane + 1) + '</span></div>'
+      + '<div class="bscore">0</div>'
+      + '<div class="bslot"></div>'
+      + '<div class="bstep">← STEP IN</div>'
+      + '<div class="bplus"></div>';
+    if (typeof enterDelayMs === 'number') {
+      el.classList.add('enter');
+      el.style.animationDelay = (enterDelayMs / 1000) + 's';
+    }
+    // Keep DOM order = lane order (left→right matches the mirrored floor).
+    var nextLane = null;
+    for (var k in beacons) {
+      if (beacons.hasOwnProperty(k) && +k > lane && (nextLane === null || +k < nextLane)) nextLane = +k;
+    }
+    beaconsEl.insertBefore(el, nextLane === null ? null : beacons[nextLane].el);
+    B = beacons[lane] = {
+      el: el,
+      dot: el.querySelector('.bdot'),
+      ring: el.querySelector('.bring'),
+      score: el.querySelector('.bscore'),
+      slot: el.querySelector('.bslot'),
+      step: el.querySelector('.bstep'),
+      plus: el.querySelector('.bplus'),
+      shown: 0, target: 0, tick: null, ringOn: false
+    };
+    if (Object.keys(beacons).length >= 3) beaconsEl.classList.add('many');
+    return B;
+  }
+  function showBeacons() { if (beaconsEl) beaconsEl.classList.add('show'); }
+  function hideBeacons() { if (beaconsEl) beaconsEl.classList.remove('show'); }
+  function clearBeacons() {
+    for (var k in beacons) { if (beacons.hasOwnProperty(k) && beacons[k].tick) clearInterval(beacons[k].tick); }
+    beacons = {};
+    if (beaconsEl) { beaconsEl.innerHTML = ''; beaconsEl.classList.remove('many', 'show'); }
+  }
+
+  function fmtScore(v) {
+    if (beaconsEl && beaconsEl.classList.contains('many') && v >= 10000) return (v / 1000).toFixed(1) + 'k';
+    return String(Math.round(v));
+  }
+
+  // Roll the displayed score toward the target in a few quick steps (felt progress, cheap paint).
+  function setBeaconScore(B, value) {
+    B.target = Math.round(value || 0);
+    if (B.tick) return;   // the in-flight roll picks up the new target
+    if (B.shown === B.target) { B.score.textContent = fmtScore(B.shown); return; }
+    B.tick = setInterval(function () {
+      var diff = B.target - B.shown;
+      if (!diff) { clearInterval(B.tick); B.tick = null; return; }
+      var step = Math.max(1, Math.ceil(Math.abs(diff) * 0.45));
+      B.shown += (diff > 0 ? step : -step);
+      if ((diff > 0 && B.shown > B.target) || (diff < 0 && B.shown < B.target)) B.shown = B.target;
+      B.score.textContent = fmtScore(B.shown);
+    }, 76);
+  }
+
+  var FIX_GLYPH = { left: '←', right: '→', back: '!', closer: '!', body: '!' };
+  function renderBeacons(scores) {
+    if (!beaconsEl || !scores || !scores.length) return;
+    showBeacons();
     for (var i = 0; i < scores.length; i++) {
-      var s = scores[i], lane = s.lane || 0;
-      var C = chipEls[lane];
-      if (!C) {
-        var el = document.createElement('div'); el.className = 'rchip';
-        el.innerHTML = '<div class="p">P' + (lane + 1) + '</div><div class="sc">0</div><div class="cb"></div>';
-        railScoresEl.appendChild(el);
-        C = chipEls[lane] = { el: el, sc: el.querySelector('.sc'), cb: el.querySelector('.cb') };
+      var s = scores[i];
+      var B = ensureBeacon(s.lane || 0);
+      setBeaconScore(B, s.total);
+      var seen = s.seen || 'ok';
+      B.el.classList.toggle('lost', seen === 'lost');
+      B.el.classList.toggle('fix', seen === 'fix');
+      if (seen === 'lost') {
+        B.step.textContent = (s.fix === 'right') ? 'STEP IN →' : '← STEP IN';
+      } else if (seen === 'fix' && s.fix) {
+        B.slot.className = 'bslot cue';
+        B.slot.textContent = FIX_GLYPH[s.fix] || '!';
+      } else {
+        B.slot.className = 'bslot';
+        B.slot.textContent = (s.combo > 1) ? ('x' + s.combo) : '';
       }
-      C.sc.textContent = Math.round(s.total);
-      C.cb.textContent = (s.combo > 1) ? ('x' + s.combo) : '';
     }
   }
-  function clearChips() { if (railScoresEl) railScoresEl.innerHTML = ''; chipEls = {}; }
-  function flashChip(lane, rating, gold) {
-    var C = chipEls[lane]; if (!C) return;
-    C.el.style.setProperty('--fc', tierColor(rating, gold));
-    C.el.classList.remove('flash', 'bump'); void C.el.offsetWidth;
-    C.el.classList.add('flash', 'bump');
-    setTimeout(function () { C.el.classList.remove('flash'); }, 420);
+
+  // Judged moment on the player's own pill: tier wash + bump + a "+N" float (numbers only — the
+  // audio owns the words; the filmstrip tile flashes separately as the choreography cue).
+  function flashBeacon(lane, rating, gold, points) {
+    var B = beacons[lane]; if (!B) return;
+    var col = tierColor(rating, gold);
+    B.el.style.setProperty('--fc', col);
+    B.el.classList.remove('flash', 'gold', 'bump'); void B.el.offsetWidth;
+    B.el.classList.add('flash', 'bump');
+    if (gold && rating !== 'miss') B.el.classList.add('gold');
+    if (points && rating !== 'miss') {
+      B.plus.textContent = '+' + points;
+      B.plus.style.color = col;
+      B.plus.classList.remove('go'); void B.plus.offsetWidth; B.plus.classList.add('go');
+    }
+  }
+
+  // ---- Neon-tube skeleton (shared coach aesthetic) ----
+  // Mirrors SkeletonKit's `default.neon` (Sources/SkeletonKit/Style.swift) so the TV draws the SAME
+  // figure as the app: a near-white core stroke wrapped in two ADDITIVE halo passes (wide + mid) in
+  // the cyan glow color, magenta articulation nodes with white centers, a head RING (not a balloon),
+  // and an optional violet ground pool. `P` = joints already mapped to canvas px; `span` = the drawn
+  // figure height (px) → drives stroke scale. No canvas shadowBlur (too slow on the Cast SoC) — the
+  // glow IS the layered additive strokes, which is also how the app does it.
+  var NEON_NODES = ['leftElbow', 'rightElbow', 'leftWrist', 'rightWrist',
+                    'leftKnee', 'rightKnee', 'leftAnkle', 'rightAnkle'];
+  function neonSkeleton(c, P, span, opt) {
+    opt = opt || {};
+    var glow = opt.glow || TOK.skeleton.glow;     // cyan halo
+    var core = opt.core || TOK.skeleton.core;     // near-white tube core
+    var jcol = opt.joint || TOK.skeleton.joint;   // magenta nodes
+    var k = opt.k || 1;
+    var coreW = Math.max(1.2, span * 0.012) * k;
+    var midW = coreW * 3, wideW = coreW * 6;
+
+    // Violet floor pool — anchors the figure to a stage (additive ellipse under the lowest joint).
+    if (opt.ground) {
+      var lowest = -1e9;
+      for (var nm in P) { if (P.hasOwnProperty(nm) && P[nm] && P[nm][1] > lowest) lowest = P[nm][1]; }
+      var la = P.leftAnkle, ra = P.rightAnkle, root = P.root;
+      var gx = root ? root[0] : (la && ra ? (la[0] + ra[0]) / 2 : null);
+      if (gx != null && lowest > -1e9) {
+        var rw = span * 0.42, rh = Math.max(4, span * 0.07);
+        c.save();
+        c.globalCompositeOperation = 'lighter';
+        c.translate(gx, lowest); c.scale(1, rh / rw);
+        var grd = c.createRadialGradient(0, 0, 0, 0, 0, rw);
+        grd.addColorStop(0, hexRGBA(TOK.skeleton.ground, 0.32)); grd.addColorStop(1, hexRGBA(TOK.skeleton.ground, 0));
+        c.fillStyle = grd;
+        c.beginPath(); c.arc(0, 0, rw, 0, 2 * Math.PI); c.fill();
+        c.restore();
+      }
+    }
+
+    function pass(width, color, alpha, op) {
+      c.save();
+      c.globalCompositeOperation = op; c.globalAlpha = alpha;
+      c.lineCap = 'round'; c.lineJoin = 'round'; c.lineWidth = width; c.strokeStyle = color;
+      for (var i = 0; i < bones.length; i++) {
+        var a = P[bones[i][0]], b = P[bones[i][1]];
+        if (!a || !b) continue;
+        c.beginPath(); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]); c.stroke();
+      }
+      c.restore();
+    }
+    pass(wideW, glow, 0.12, 'lighter');    // wide outer halo
+    pass(midW, glow, 0.30, 'lighter');     // mid halo
+    pass(coreW, core, 1.0, 'source-over'); // bright near-white tube
+
+    // Glowing articulation nodes: additive magenta dot + a white center so they read as lit.
+    for (var j = 0; j < NEON_NODES.length; j++) {
+      var p = P[NEON_NODES[j]]; if (!p) continue;
+      c.save();
+      c.globalCompositeOperation = 'lighter'; c.globalAlpha = 0.9; c.fillStyle = jcol;
+      c.beginPath(); c.arc(p[0], p[1], coreW * 1.5, 0, 2 * Math.PI); c.fill();
+      c.restore();
+      c.fillStyle = '#ffffff';
+      c.beginPath(); c.arc(p[0], p[1], coreW * 0.6, 0, 2 * Math.PI); c.fill();
+    }
+
+    // Head as a RING (faint inner fill + additive glow ring + core ring).
+    var head = P.nose || P.neck;
+    if (head) {
+      var hr = coreW * 2.6;
+      c.save(); c.globalAlpha = 0.12; c.fillStyle = core;
+      c.beginPath(); c.arc(head[0], head[1], hr, 0, 2 * Math.PI); c.fill(); c.restore();
+      c.save(); c.globalCompositeOperation = 'lighter'; c.globalAlpha = 0.5;
+      c.strokeStyle = glow; c.lineWidth = midW * 0.5;
+      c.beginPath(); c.arc(head[0], head[1], hr, 0, 2 * Math.PI); c.stroke(); c.restore();
+      c.strokeStyle = core; c.lineWidth = coreW;
+      c.beginPath(); c.arc(head[0], head[1], hr, 0, 2 * Math.PI); c.stroke();
+    }
   }
 
   // ---- Move filmstrip (Just-Dance "now / next" pictograms) ----
   // Draw one key-pose centered + fit to the tile (bbox-fit like drawFigure, in unit-square space so a tall
-  // standing pose fills a portrait tile). Mirror-matched to the on-screen video.
+  // standing pose fills a portrait tile). Mirror-matched to the on-screen video. Star moves glow gold.
   function drawMoveTile(c, joints, W, H, mir, isNow, gold) {
     c.clearRect(0, 0, W, H);
     var minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9, any = false;
@@ -410,20 +589,17 @@
     }
     if (!any) return;
     var pbw = Math.max(0.001, maxX - minX), pbh = Math.max(0.001, maxY - minY);
-    var s = Math.min(W * 0.84 / pbw, H * 0.84 / pbh);
+    var s = Math.min(W * 0.8 / pbw, H * 0.8 / pbh);
     var ccx = (minX + maxX) / 2, ccy = (minY + maxY) / 2;
     function map(p) { var x = W / 2 + (p[0] - ccx) * s; if (mir) x = W - x; return [x, H / 2 + (p[1] - ccy) * s]; }
-    var color = gold ? '#ffd400' : (isNow ? '#ffffff' : '#f2f2f7');
-    var lw = Math.max(2, H * (isNow ? 0.05 : 0.04));
-    c.lineCap = 'round'; c.lineJoin = 'round'; c.lineWidth = lw; c.strokeStyle = color;
-    for (var i = 0; i < bones.length; i++) {
-      var a = joints[bones[i][0]], b = joints[bones[i][1]];
-      if (!a || !b) continue;
-      var ma = map(a), mb = map(b);
-      c.beginPath(); c.moveTo(ma[0], ma[1]); c.lineTo(mb[0], mb[1]); c.stroke();
-    }
-    var head = joints.nose || joints.neck;
-    if (head) { var mh = map(head); c.fillStyle = color; c.beginPath(); c.arc(mh[0], mh[1], lw * 1.25, 0, 2 * Math.PI); c.fill(); }
+    var P = {};
+    for (var nm in joints) { if (joints.hasOwnProperty(nm) && joints[nm]) P[nm] = map(joints[nm]); }
+    neonSkeleton(c, P, pbh * s, {
+      k: isNow ? 0.78 : 0.66,
+      glow: gold ? TOK.gold : TOK.skeleton.glow,
+      core: gold ? '#fff7cc' : TOK.skeleton.core,   // '#fff7cc' = a gold-tint core highlight (derived, not a token)
+      joint: gold ? TOK.gold : TOK.skeleton.joint
+    });
   }
 
   function renderFilmstrip() {
@@ -516,19 +692,29 @@
     if (!finalEl) finalEl = document.getElementById('final');
     if (!finalEl) return;
     var wrap = finalEl.querySelector('.final-scores');
+    players = players || [];
+    var count = Math.max(1, players.length);
+    // Winner (top total) gets a gold-warmed glow — only when there's more than one player.
+    var winLane = -1, winTotal = -1;
+    for (var w = 0; w < players.length; w++) {
+      if ((players[w].total || 0) > winTotal) { winTotal = players[w].total || 0; winLane = players[w].lane || 0; }
+    }
     var html = '';
-    if (players && players.length) {
-      for (var i = 0; i < players.length; i++) {
-        var p = players[i];
-        var stars = '', n = p.stars || 0;
-        for (var s = 0; s < 5; s++) stars += (s < n) ? '★' : '☆';
-        html += '<div class="final-player">'
-          + (players.length > 1 ? '<div class="final-lane">P' + ((p.lane || 0) + 1) + '</div>' : '')
-          + '<div class="final-num">' + Math.round(p.total || 0) + '</div>'
-          + '<div class="final-stars">' + stars + '</div></div>';
-      }
+    for (var i = 0; i < players.length; i++) {
+      var p = players[i];
+      var lane = p.lane || 0;
+      var stars = '', n = p.stars || 0;
+      for (var s = 0; s < 5; s++) stars += (s < n) ? '★' : '☆';
+      var isWin = players.length > 1 && lane === winLane;
+      // One lane-framed glass card per player (identity dot + Pn, white hero score, gold stars).
+      html += '<div class="final-player' + (isWin ? ' win' : '') + '"'
+        + ' style="--lc:' + laneColor(lane) + ';--lcglow:' + laneRGBA(lane, 0.45) + '">'
+        + '<div class="final-lane"><i class="dot"></i>P' + (lane + 1) + '</div>'
+        + '<div class="final-num">' + Math.round(p.total || 0) + '</div>'
+        + '<div class="final-stars">' + stars + '</div></div>';
     }
     if (wrap) {
+      wrap.className = 'final-scores n' + Math.min(4, count) + (players.length > 1 ? ' multi' : '');
       wrap.innerHTML = html;
       finalEl.style.display = 'flex';
       wrap.style.transition = 'none'; wrap.style.transform = 'scale(0.6)'; wrap.style.opacity = '0';
@@ -548,7 +734,7 @@
 
   function onFinal(d) {
     clearPendingFeedback();
-    clearGuards(); hideStage(); hideGetReady();
+    clearGuards(); hideStage(); hideGetReady(); hideBeacons();
     // Freeze the round on its last frame and reveal the score. Over an embed we must not draw on the
     // player (ToS) — hide it first so the score sits on a clean background.
     try { if (videoEl) videoEl.pause(); } catch (e) { /* ignore */ }
@@ -564,6 +750,10 @@
   function hideGetReady() { if (getreadyEl) getreadyEl.style.display = 'none'; }
   function onGetReady(d) {
     hideStage(); hideFinal();
+    // Beacon roll-call: the framing screen's lanes pop in left→right (100ms stagger), each in its
+    // lane color — position + color binding lands right before GO. Idempotent across the 5 counts.
+    for (var i = 0; i < framingLanes.length; i++) ensureBeacon(framingLanes[i], i * 100);
+    showBeacons();
     if (!getreadyEl) return;
     var num = getreadyEl.querySelector('.gr-num');
     if (num) {
@@ -586,19 +776,20 @@
   }
 
   // Draw one live skeleton mapped DIRECTLY from [0,1] frame coords into the box, so the dancer's real
-  // position (and any edge clipping) is visible — unlike drawFigure, which fills the screen.
+  // position (and any edge clipping) is visible — unlike drawFigure, which fills the screen. Rendered as
+  // a neon tube whose HALO is the lane color (the framing "identity beat": a well-framed dancer glows in
+  // their lane color, off-frame ones glow neutral grey).
   function drawSkeletonRaw(c, joints, W, H, mir, color) {
     function map(p) { var nx = mir ? (1 - p[0]) : p[0]; return [nx * W, p[1] * H]; }
-    var lw = Math.max(3, H * 0.016);
-    c.lineCap = 'round'; c.lineJoin = 'round'; c.lineWidth = lw; c.strokeStyle = color;
-    for (var i = 0; i < bones.length; i++) {
-      var a = joints[bones[i][0]], b = joints[bones[i][1]];
-      if (!a || !b) continue;
-      var ma = map(a), mb = map(b);
-      c.beginPath(); c.moveTo(ma[0], ma[1]); c.lineTo(mb[0], mb[1]); c.stroke();
+    var P = {}, minY = 1e9, maxY = -1e9;
+    for (var n in joints) {
+      if (!joints.hasOwnProperty(n) || !joints[n]) continue;
+      P[n] = map(joints[n]);
+      if (P[n][1] < minY) minY = P[n][1];
+      if (P[n][1] > maxY) maxY = P[n][1];
     }
-    var head = joints.nose || joints.neck;
-    if (head) { var mh = map(head); c.fillStyle = color; c.beginPath(); c.arc(mh[0], mh[1], lw * 1.3, 0, 2 * Math.PI); c.fill(); }
+    var span = Math.max(40, maxY - minY);
+    neonSkeleton(c, P, span, { glow: color, joint: color, core: TOK.skeleton.core, k: 0.95 });
   }
 
   function hideStage() { if (stageEl) stageEl.style.display = 'none'; }
@@ -612,43 +803,41 @@
     var players = d.players || [];
     var allOk = players.length > 0 && players.every(function (p) { return p.ok; });
     if (stageBox) stageBox.classList.toggle('ok', allOk);
+    // The identity beat: a well-framed dancer's skeleton lights up in THEIR lane color ("I'm the
+    // pink one") right before the round; the same lanes get the beacon roll-call at Get Ready.
+    if (players.length) {
+      framingLanes = players.map(function (p) { return p.lane || 0; }).sort(function (a, b) { return a - b; });
+    }
     if (stageCtx && stageCanvas) {
       var w = stageCanvas.clientWidth || 360, h = stageCanvas.clientHeight || 640;
       if (stageCanvas.width !== w || stageCanvas.height !== h) { stageCanvas.width = w; stageCanvas.height = h; }
       stageCtx.clearRect(0, 0, stageCanvas.width, stageCanvas.height);
       for (var i = 0; i < players.length; i++) {
         if (players[i].j) {
-          drawSkeletonRaw(stageCtx, players[i].j, stageCanvas.width, stageCanvas.height, mirrored, players[i].ok ? '#34c759' : '#f2f2f7');
+          drawSkeletonRaw(stageCtx, players[i].j, stageCanvas.width, stageCanvas.height, mirrored,
+                          players[i].ok ? laneColor(players[i].lane || 0) : '#f2f2f7');
         }
       }
     }
     stageEl.style.display = 'flex';
   }
 
-  // In-round per-player "come back!" nudge chips with a rejoin ring.
-  var guardChips = {};
+  // In-round "come back!" — no more top-left chips (outside the dancer's sightline): the guard's
+  // rejoin ring fills around the player's own beacon dot, where their eyes already go for the score.
   function clearGuards() {
-    if (guardEl) { for (var k in guardChips) { if (guardChips.hasOwnProperty(k)) { try { guardEl.removeChild(guardChips[k]); } catch (e) {} } } }
-    guardChips = {};
+    for (var k in beacons) {
+      if (beacons.hasOwnProperty(k)) { beacons[k].ring.style.setProperty('--p', 0); beacons[k].ringOn = false; }
+    }
   }
   function onGuard(d) {
-    if (!guardEl) return;
-    var lane = d.lane || 0;
+    var B = beacons[d.lane || 0]; if (!B) return;
     if (d.state === 'ok' || d.state === 'rejoin') {
-      if (guardChips[lane]) { try { guardEl.removeChild(guardChips[lane]); } catch (e) {} delete guardChips[lane]; }
+      B.ring.style.setProperty('--p', 0);
+      B.ringOn = false;
       return;
     }
-    var chip = guardChips[lane];
-    if (!chip) {
-      chip = document.createElement('div');
-      chip.className = 'nudge';
-      chip.innerHTML = '<span class="ring"></span><span class="lbl"></span>';
-      guardEl.appendChild(chip);
-      guardChips[lane] = chip;
-      tone(440, 0.12, 0.3);   // soft, distinct from a "miss"
-    }
-    chip.querySelector('.lbl').textContent = 'P' + (lane + 1) + ' — come back!';
-    chip.querySelector('.ring').style.setProperty('--p', Math.round((d.ring || 0) * 100));
+    if (!B.ringOn) { B.ringOn = true; tone(440, 0.12, 0.3); }   // soft, distinct from a "miss"
+    B.ring.style.setProperty('--p', Math.round((d.ring || 0) * 100));
   }
 
   // ---- Coach rendering (synced to the song) ----
@@ -694,28 +883,9 @@
       return [ox + mx * drawW, oy + ny * drawH];
     }
 
-    var lw = Math.max(10, drawH * 0.05);
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.lineWidth = lw;
-    ctx.strokeStyle = '#f2f2f7';
-    for (var i = 0; i < bones.length; i++) {
-      var a = joints[bones[i][0]], b = joints[bones[i][1]];
-      if (!a || !b) continue;
-      var ma = map(a), mb = map(b);
-      ctx.beginPath();
-      ctx.moveTo(ma[0], ma[1]);
-      ctx.lineTo(mb[0], mb[1]);
-      ctx.stroke();
-    }
-    var head = joints.nose || joints.neck;
-    if (head) {
-      var mh = map(head);
-      ctx.fillStyle = '#f2f2f7';
-      ctx.beginPath();
-      ctx.arc(mh[0], mh[1], lw * 1.15, 0, 2 * Math.PI);
-      ctx.fill();
-    }
+    var P = {};
+    for (var nm in joints) { if (joints.hasOwnProperty(nm) && joints[nm]) P[nm] = map(joints[nm]); }
+    neonSkeleton(ctx, P, drawH, { ground: true });
   }
 
   function frame() {
@@ -794,12 +964,12 @@
     videoPlaying = false;
   }
 
-  // Reset the move filmstrip + score chips for a new routine, and switch the layout (mode + orientation).
+  // Reset the move filmstrip + beacons for a new routine, and switch the layout (mode + orientation).
   function resetMoves(d) {
     moves = []; moveChunks = d.moveChunks || 0; recvMoveChunks = 0; movesReady = false;
     nowIndex = 0; lastDrawnNow = -1;
     if (filmstripEl) filmstripEl.style.display = 'none';
-    clearChips();
+    clearBeacons();
   }
 
   function onLoad(d) {
@@ -1009,7 +1179,7 @@
       else { audio.pause(); }
     } else if (d.cmd === 'stop') {
       clearPendingFeedback();
-      hideFinal(); clearGuards(); hideStage(); hideGetReady();
+      hideFinal(); clearGuards(); hideStage(); hideGetReady(); hideBeacons();
       if (embedMode) {
         if (embedApi) { embedApi.pause(); embedApi.seek0(); }
         embedEl.style.display = 'none';
@@ -1050,10 +1220,10 @@
     // not "take over" before the track establishes).
     if (d.gold && d.rating !== 'miss') duck(0.7, 0.4);
     else if (d.rating === 'perfect') duck(0.8, 0.25);
-    // Rail feedback in EVERY mode — flash the move tile just judged + the player's score chip. We never
-    // draw over the video (licensing/ToS); the old full-screen glow + centered word are retired.
-    flashTile(d.idx, d.rating, d.gold, d.points);
-    flashChip(d.lane || 0, d.rating, d.gold);
+    // The judged moment lands on the player's BEACON (in the sightline): tier wash + bump + "+N".
+    // The filmstrip tile still flashes as the choreography cue (no +N there anymore — one home).
+    flashTile(d.idx, d.rating, d.gold);
+    flashBeacon(d.lane || 0, d.rating, d.gold, d.points);
   }
 
   function onFeedback(d) {
@@ -1083,7 +1253,7 @@
         case 'moves': onMoves(d); break;
         case 'cmd': onCmd(d); break;
         case 'feedback': onFeedback(d); break;
-        case 'score': renderChips(d.scores); break;
+        case 'score': renderBeacons(d.scores); break;
         case 'final': onFinal(d); break;
         case 'getready': onGetReady(d); break;
         case 'go': onGo(d); break;
@@ -1161,16 +1331,35 @@
     document.body.classList.add('playing');
     setStatus('MOCK preview (click to enable sound)');
     var tiers = [['perfect', false, 100], ['good', false, 60], ['ok', false, 30], ['perfect', true, 300], ['miss', false, 0]];
-    var totals = [0, 0], combos = [0, 0];
+    var mockN = 2;                                   // simulated player count (1–4)
+    var totals = [0, 0, 0, 0], combos = [0, 0, 0, 0];
+    var mockSeen = [{ seen: 'ok' }, { seen: 'ok' }, { seen: 'ok' }, { seen: 'ok' }];
+    function mockLanesArr() { var a = []; for (var i = 0; i < mockN; i++) a.push(i); return a; }
+    // (Re)start the round for the current player count: reset scores, roll-call the beacons, GO.
+    function mockRollCall() {
+      clearBeacons();
+      framingLanes = mockLanesArr();
+      for (var i = 0; i < mockN; i++) { totals[i] = 0; combos[i] = 0; mockSeen[i] = { seen: 'ok' }; }
+      onGetReady({ n: 3 }); onGo();
+    }
+    mockRollCall();
     setInterval(function () {
-      for (var lane = 0; lane < 2; lane++) {
+      var scores = [];
+      for (var lane = 0; lane < mockN; lane++) {
         var x = pick(tiers);
         onFeedback({ rating: x[0], gold: x[1], points: x[2], lane: lane, idx: nowIndex });
         combos[lane] = x[0] === 'miss' ? 0 : combos[lane] + 1;
         totals[lane] += x[2];
+        scores.push({ lane: lane, total: totals[lane], combo: combos[lane], seen: mockSeen[lane].seen, fix: mockSeen[lane].fix });
       }
-      renderChips([{ lane: 0, total: totals[0], combo: combos[0] }, { lane: 1, total: totals[1], combo: combos[1] }]);
+      renderBeacons(scores);
     }, 1300);
+    // Drive a beacon's presence state from the console: DNTestSeen(1,'lost','left') / ('fix','back') / ('ok').
+    window.DNTestSeen = function (lane, seen, fix) {
+      mockSeen[lane || 0] = { seen: seen || 'ok', fix: fix || null };
+    };
+    // Set the simulated player count (1–4) and restart the roll-call — exercises every beacon layout.
+    window.DNTestPlayers = function (n) { mockN = Math.max(1, Math.min(4, n || 2)); mockRollCall(); };
     // Browser-only dev hooks (mock): preview the rail + cast-UX overlays.
     window.DNTestMoves = function (n) { moveChunks = 1; recvMoveChunks = 0; moves = []; nowIndex = 0; lastDrawnNow = -1; onMoves({ moves: mockMoves(n || 12) }); };
     window.DNTestOrient = function (o) { applyOrientation(o || 'portrait'); };
@@ -1184,7 +1373,10 @@
         onDbgPose({ j: standingJoints(a), bones: bm });
       }, 60);
     };
-    window.DNTestFinal = function (p) { onFinal({ players: p || [{ lane: 0, total: 2910, stars: 4 }] }); };
+    window.DNTestFinal = function (p) {
+      if (!p) { p = []; for (var i = 0; i < mockN; i++) p.push({ lane: i, total: 1480 + i * 690 + (i === 1 ? 800 : 0), stars: Math.min(5, 2 + i) }); }
+      onFinal({ players: p });
+    };
     window.DNTestGetReady = function (n) { onGetReady({ n: n == null ? 3 : n }); };
     window.DNTestGo = function () { onGo(); };
     window.DNTestFraming = function (instr, ok) { onFraming({ state: 'setup', instr: instr || 'Back up — I need to see your feet', players: [{ lane: 0, ok: !!ok, j: standingJoints(0.3) }] }); };

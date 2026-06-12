@@ -6,7 +6,11 @@
   <title>Floored TV</title>
   <!-- ?v= cache-busts the JS/CSS on the Cast device when this index reloads; bump it (and BUILD in
        receiver.js) on every receiver change so a stale device can't silently serve old code. -->
-  <link rel="stylesheet" href="styles.css?v=jun11-audiomix">
+  <link rel="preload" href="nunito-vf.woff2?v=jun12-castpolish" as="font" type="font/woff2" crossorigin>
+  <!-- Shared palette generated from /design-tokens.json (scripts/gen-design-tokens.mjs) — the SAME source
+       the Swift app reads. Load before styles.css so its :root tokens resolve. -->
+  <link rel="stylesheet" href="design-tokens.generated.css?v=jun12-castpolish">
+  <link rel="stylesheet" href="styles.css?v=jun12-castpolish">
   <!-- Google Cast Application Framework (CAF) receiver SDK -->
   <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
 </head>
@@ -31,21 +35,25 @@
     <canvas id="dbgskeleton"></canvas>
   </div>
 
-  <!-- The FEEDBACK RAIL: the move filmstrip ("now / next" pictograms) + per-player score chips. Sits in the
-       right pillar for portrait clips, as a bottom strip for landscape clips. Never overlaps the video. -->
+  <!-- The RAIL now has exactly ONE job: the move filmstrip ("now / next" pictograms) — the
+       choreography aid. Scores/identity/presence moved into the in-sightline BEACONS below. Sits in
+       the right pillar for portrait clips, as a bottom strip for landscape clips. -->
   <div id="rail">
-    <div id="railscores" class="railscores"></div>
     <div id="filmstrip"></div>
   </div>
+
+  <!-- The BEACONS: one pill per player = lane dot (identity color) + score + combo/cue + presence
+       (SEEN bright / FIX dimmed / LOST hollow + "STEP IN"). Parked on the STAGE's top edge —
+       in the dancer's sightline — for figure/video modes (our own content, overlays allowed);
+       embed mode shifts them the minimum legal distance off the platform player (see styles.css).
+       Mirrors the phone HUD exactly, so the glance habit transfers. -->
+  <div id="beacons"></div>
 
   <!-- Ambient edge-glow (figure mode legacy; retired in favour of the rail flash). -->
   <div id="glow" class="glow"></div>
 
-  <!-- Big rating word (legacy; retired in favour of the rail flash). -->
+  <!-- Big rating word (legacy; retired in favour of the beacon flash). -->
   <div id="wordwrap"><div id="word"></div></div>
-
-  <!-- Legacy corner scoreboard (unused; scores now render into #railscores). -->
-  <div id="scores" class="scores"></div>
 
   <!-- Big final-score reveal at the end of a cast round (exact total, in sync with the phone). -->
   <div id="final" class="final"><div class="final-title">FINAL</div><div class="final-scores"></div></div>
@@ -59,9 +67,6 @@
     <div class="stage-box"><canvas id="stagecanvas"></canvas><div class="stage-safe"></div></div>
     <div class="stage-instr"></div>
   </div>
-
-  <!-- In-round "come back" nudges — one chip per out-of-frame player. -->
-  <div id="guard" class="guard"></div>
 
   <!-- Idle "lobby": the bystander-acquisition QR shown whenever no routine is active (the In-Room QR
        loop). Anyone in the room can scan it to install Floored. Hidden the moment a routine starts.
@@ -85,7 +90,9 @@
   <div id="build" style="position:fixed; right:10px; bottom:8px; font:11px/1 monospace; opacity:0.4; color:#fff; z-index:9;"></div>
 
   <!-- Audio-mix policies (ducking + sync guard) — unit-tested in receiver/test/; must load first. -->
-  <script src="audio-mix.js?v=jun11-audiomix"></script>
-  <script src="receiver.js?v=jun11-audiomix"></script>
+  <script src="audio-mix.js?v=jun12-castpolish"></script>
+  <!-- window.FlooredTokens (shared palette) — generated from /design-tokens.json; must precede receiver.js. -->
+  <script src="design-tokens.generated.js?v=jun12-castpolish"></script>
+  <script src="receiver.js?v=jun12-castpolish"></script>
 </body>
 </html>
