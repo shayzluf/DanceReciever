@@ -16,7 +16,7 @@
  *   phone → TV   { t:'loadVideo', videoUrl, audioUrl, mirrored, moveChunks, aspectW, aspectH, orient }  // silent clip + catalog mp3
  *   phone → TV   { t:'moves', moves:[{i,t,gold,j}] } × moveChunks   // one-shot move pictograms (TV advances by playhead)
  *   phone → TV   { t:'cmd', cmd:'play'|'pause'|'stop'|'debug', on? }
- *   phone → TV   { t:'feedback', lane, rating, points, gold, at, idx }   // at = target TV-playhead (sec); idx = checkpoint
+ *   phone → TV   { t:'feedback', lane, rating, points, gold, at, idx, timing }   // timing: ''|'early'|'on'|'late' (player-vs-coach)
  *   phone → TV   { t:'score', scores:[{lane,total,combo,seen,fix}] }   // seen:'ok'|'fix'|'lost' (+fix cue) → beacons
  *   phone → TV   { t:'final', players:[{lane,total,stars}] }   // round over → big final-score reveal
  *   phone → TV   { t:'getready', n }  ·  { t:'go' }            // "Get Ready" countdown on the TV
@@ -80,7 +80,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun12-finalfix';
+  var BUILD = 'jun15-timing';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -1221,6 +1221,11 @@
 
   function presentFeedback(d) {
     toneTier(d.rating, d.gold);
+    // Cast-mode timing cue: a quick directional grace note through the TV speakers when notably off-beat
+    // (early = high, late = low) — the SAME audio channel the phone uses, since the dancer is across the room
+    // from the TV too. Pitched clear of the rating tones (1320/990/660/196) so it reads as a separate cue.
+    if (d.timing === 'early') tone(1568, 0.05, 0.34);
+    else if (d.timing === 'late') tone(392, 0.06, 0.34);
     // Gentle, brief duck only on the prominent moments so the tone pops — the music stays clearly audible
     // and never disappears. good/ok/miss don't duck at all (their tone cuts through on its own). The
     // first ~0.9s after play is suppressed by the ducker itself (settle window — early feedback must

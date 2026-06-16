@@ -6,7 +6,7 @@
    no regression). Served from the receiver origin, so it loads on the Cast device exactly as locally. */
 @font-face {
   font-family: "Floored Rounded";
-  src: url("nunito-vf.woff2?v=jun12-finalfix") format("woff2");
+  src: url("nunito-vf.woff2?v=jun15-timing") format("woff2");
   font-weight: 200 1000;
   font-display: swap;
 }
