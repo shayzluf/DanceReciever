@@ -58,6 +58,8 @@
   var statusEl = document.getElementById('status');
   var lobbyEl = document.getElementById('lobby');
   var lobbyStatusEl = document.getElementById('lobbystatus');
+  var recordEl = document.getElementById('record');
+  var recordMode = false;   // a take is recording on the PHONE → show the "watch the phone" card, hide boxes
 
   // Stage + rail (the split layout). The coach lives in #videostage; the rail's sole job now is the
   // move filmstrip — scores/identity/presence live in the in-sightline #beacons layer.
@@ -80,7 +82,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun15-timing';
+  var BUILD = 'jun23-record';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -759,8 +761,12 @@
     hideStage(); hideFinal();
     // Beacon roll-call: the framing screen's lanes pop in left→right (100ms stagger), each in its
     // lane color — position + color binding lands right before GO. Idempotent across the 5 counts.
-    for (var i = 0; i < framingLanes.length; i++) ensureBeacon(framingLanes[i], i * 100);
-    showBeacons();
+    // Skipped in record mode: a take has no score/identity boxes (the action is on the phone, behind
+    // the card), so the count plays clean over the record card instead of empty placeholders.
+    if (!recordMode) {
+      for (var i = 0; i < framingLanes.length; i++) ensureBeacon(framingLanes[i], i * 100);
+      showBeacons();
+    }
     if (!getreadyEl) return;
     var num = getreadyEl.querySelector('.gr-num');
     if (num) {
@@ -774,12 +780,34 @@
     tone(d.n <= 1 ? 1320 : 660, 0.09, 0.4);   // brighter tone on the last beat
   }
   function onGo() {
+    if (recordMode) { showRecordCard(); if (recordEl) recordEl.classList.remove('counting'); }   // fade in REC + direction for the take
     var num = getreadyEl ? getreadyEl.querySelector('.gr-num') : null;
     if (num) num.textContent = 'GO!';
     tone(784, 0.1, 0.5);
     setTimeout(function () { tone(988, 0.1, 0.5); }, 90);
     setTimeout(function () { tone(1319, 0.18, 0.5); }, 180);
     setTimeout(hideGetReady, 650);
+  }
+
+  // Record mode: a take is being captured on the PHONE (the recording is never cast as video). The phone
+  // brackets it with record:start (just before the count) / record:stop (when the take ends). Rather than
+  // empty score/coach boxes, show a calm "watch the phone" card — the countdown still plays on top of it.
+  function showRecordCard() { if (recordEl) recordEl.style.display = 'flex'; }
+  function hideRecordCard() { if (recordEl) { recordEl.style.display = 'none'; recordEl.classList.remove('counting'); } }
+  function onRecord(d) {
+    if (d.state === 'stop') {
+      recordMode = false;
+      hideRecordCard(); hideGetReady();
+      showLobby();                 // take done → back to the idle install QR
+      setStatus('ready');
+      return;
+    }
+    recordMode = true;             // 'start' (default): drop any stale boxes and raise the full-bleed card NOW so
+    clearPendingFeedback(); clearGuards();   // its bg covers the empty coach/rail layers (the role the lobby plays at idle).
+    hideStage(); hideFinal(); hideBeacons(); clearBeacons();
+    if (recordEl) recordEl.classList.add('counting');   // count shows just the number on the card's dark bg; text fades in at GO
+    showRecordCard();
+    setStatus('recording on phone');
   }
 
   // Draw one live skeleton mapped DIRECTLY from [0,1] frame coords into the box, so the dancer's real
@@ -981,6 +1009,7 @@
 
   function onLoad(d) {
     clearPendingFeedback();
+    recordMode = false; hideRecordCard();   // a real routine supersedes a record take (insurance vs a missed record:stop)
     hideFinal(); clearGuards();
     exitVideoMode();
     if (embedEl) { embedEl.style.display = 'none'; embedEl.innerHTML = ''; }
@@ -1005,6 +1034,7 @@
   // Our own content → feedback overlays are allowed (presentFeedback only suppresses them for embeds).
   function onLoadVideo(d) {
     clearPendingFeedback();
+    recordMode = false; hideRecordCard();   // a real routine supersedes a record take (insurance vs a missed record:stop)
     hideFinal(); clearGuards();
     poseFrames = []; loaded = false; mockMode = false;
     embedMode = false; embedPlaying = false; embedApi = null; embedPlayer = null;
@@ -1043,6 +1073,7 @@
   // Reference-don't-host on the TV: load the routine's platform video (real video + original sound).
   function onLoadEmbed(d) {
     clearPendingFeedback();
+    recordMode = false; hideRecordCard();   // a real routine supersedes a record take (insurance vs a missed record:stop)
     hideFinal(); clearGuards();
     exitVideoMode();
     loaded = false; mockMode = false;
@@ -1269,6 +1300,7 @@
         case 'final': onFinal(d); break;
         case 'getready': onGetReady(d); break;
         case 'go': onGo(d); break;
+        case 'record': onRecord(d); break;
         case 'framing': onFraming(d); break;
         case 'guard': onGuard(d); break;
         case 'dbgpose': onDbgPose(d); break;
