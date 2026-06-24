@@ -83,7 +83,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun24-hello';
+  var BUILD = 'jun24-final';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -696,7 +696,7 @@
   }
 
   // ---- Final-score reveal (end of a cast round): big, exact total in sync with the phone ----
-  function showFinal(players) {
+  function showFinal(players, playTone) {
     if (!finalEl) finalEl = document.getElementById('final');
     if (!finalEl) return;
     var wrap = finalEl.querySelector('.final-scores');
@@ -734,10 +734,13 @@
     } else {
       finalEl.style.display = 'flex';
     }
-    // celebratory rising arpeggio
-    tone(784, 0.12, 0.5);
-    setTimeout(function () { tone(988, 0.12, 0.5); }, 120);
-    setTimeout(function () { tone(1319, 0.22, 0.5); }, 240);
+    // celebratory rising arpeggio — only on the FIRST show (the phone re-sends `final` a few times to
+    // survive a dropped message, so skip the tone on a re-show to avoid a stuttering triple arpeggio).
+    if (playTone !== false) {
+      tone(784, 0.12, 0.5);
+      setTimeout(function () { tone(988, 0.12, 0.5); }, 120);
+      setTimeout(function () { tone(1319, 0.22, 0.5); }, 240);
+    }
   }
 
   function hideFinal() { if (finalEl) finalEl.style.display = 'none'; }
@@ -752,7 +755,10 @@
     if (embedMode) { if (embedApi) { try { embedApi.pause(); } catch (e) {} } if (embedEl) embedEl.style.display = 'none'; }
     document.body.classList.remove('playing');
     setStatus('');
-    showFinal(d.players);
+    // The phone re-sends `final` a few times (a single one can be dropped). Only play the celebratory tone
+    // the first time the reveal appears for this round; a re-send just re-asserts the same cards silently.
+    var reShow = finalEl && getComputedStyle(finalEl).display === 'flex';
+    showFinal(d.players, !reShow);
   }
 
   // ---- Pro cast UX: "Get Ready" countdown, "Set up your stage" framing, in-round guard ----
