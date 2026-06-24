@@ -83,7 +83,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun24-reveal2';
+  var BUILD = 'jun24-byo0';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -830,6 +830,45 @@
     }
   }
 
+  // ---- BYO music: the phone streams the user's OWN audio file to us over the data channel (never via a
+  // server). We reassemble the base64 chunks into a Blob and play it from an object URL. Same-origin to this
+  // HTTPS page, so no mixed-content problem (unlike an http:// local server). PHASE 0: a debug-triggered
+  // proof — receive → Blob → play standalone. Wiring into the cast round (loadVideo + audioBlobId) is later.
+  var byoBuf = null, byoMime = '', byoChunks = 0, byoChunkBytes = 0, byoReceived = 0, byoID = '';
+  var byoAudioURL = null, lastAudioBlobID = '';
+  function onAudioInit(d) {
+    if (d.id && d.id === lastAudioBlobID && byoAudioURL) {   // dedup: we already hold this exact clip
+      broadcast({ t: 'audioAck', id: d.id, have: 'all' });
+      return;
+    }
+    byoID = d.id || ''; byoMime = d.mime || 'audio/mpeg';
+    byoChunks = d.chunks || 0; byoChunkBytes = d.chunkBytes || 0;
+    byoBuf = new Uint8Array(d.total || 0); byoReceived = 0;
+    setStatus('receiving audio… 0/' + byoChunks);
+  }
+  function onAudioChunk(d) {
+    if (d.id !== byoID || !byoBuf) return;
+    var bin = atob(d.d || ''), off = d.i * byoChunkBytes;
+    for (var k = 0; k < bin.length; k++) byoBuf[off + k] = bin.charCodeAt(k);
+    byoReceived++;
+    if ((byoReceived % 16) === 0) { setStatus('receiving audio… ' + byoReceived + '/' + byoChunks); }
+    if (byoReceived >= byoChunks) finalizeByoAudio();   // don't wait on audioEnd
+  }
+  function onAudioEnd(d) { if (d.id === byoID) finalizeByoAudio(); }   // backstop if the last chunk was missed
+  function finalizeByoAudio() {
+    if (!byoBuf) return;   // idempotent (chunk-complete and audioEnd can both call)
+    if (byoAudioURL) { try { URL.revokeObjectURL(byoAudioURL); } catch (e) { /* ignore */ } }
+    var blob = new Blob([byoBuf], { type: byoMime });
+    byoAudioURL = URL.createObjectURL(blob);
+    lastAudioBlobID = byoID; byoBuf = null;
+    broadcast({ t: 'audioAck', id: lastAudioBlobID, have: 'all' });
+    // PHASE 0 proof: play the rebuilt clip standalone so it's audible/verifiable on the TV right now.
+    hideLobby();
+    audio.src = byoAudioURL; audio.load();
+    audio.play().catch(function () { /* autoplay gate in the browser preview; fine on a real Cast device */ });
+    setStatus('BYO audio ready — ' + blob.size + ' bytes, playing');
+  }
+
   // Draw one live skeleton mapped DIRECTLY from [0,1] frame coords into the box, so the dancer's real
   // position (and any edge clipping) is visible — unlike drawFigure, which fills the screen. Rendered as
   // a neon tube whose HALO is the lane color (the framing "identity beat": a well-framed dancer glows in
@@ -1322,6 +1361,9 @@
         case 'go': onGo(d); break;
         case 'record': onRecord(d); break;
         case 'castlock': onCastLock(d); break;
+        case 'audioInit': onAudioInit(d); break;
+        case 'audioChunk': onAudioChunk(d); break;
+        case 'audioEnd': onAudioEnd(d); break;
         case 'framing': onFraming(d); break;
         case 'guard': onGuard(d); break;
         case 'dbgpose': onDbgPose(d); break;

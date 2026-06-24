@@ -6,11 +6,11 @@
   <title>Floored TV</title>
   <!-- ?v= cache-busts the JS/CSS on the Cast device when this index reloads; bump it (and BUILD in
        receiver.js) on every receiver change so a stale device can't silently serve old code. -->
-  <link rel="preload" href="nunito-vf.woff2?v=jun24-reveal2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="nunito-vf.woff2?v=jun24-byo0" as="font" type="font/woff2" crossorigin>
   <!-- Shared palette generated from /design-tokens.json (scripts/gen-design-tokens.mjs) — the SAME source
        the Swift app reads. Load before styles.css so its :root tokens resolve. -->
-  <link rel="stylesheet" href="design-tokens.generated.css?v=jun24-reveal2">
-  <link rel="stylesheet" href="styles.css?v=jun24-reveal2">
+  <link rel="stylesheet" href="design-tokens.generated.css?v=jun24-byo0">
+  <link rel="stylesheet" href="styles.css?v=jun24-byo0">
   <!-- Google Cast Application Framework (CAF) receiver SDK -->
   <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
 </head>
@@ -110,9 +110,9 @@
   <div id="build" style="position:fixed; right:10px; bottom:8px; font:11px/1 monospace; opacity:0.4; color:#fff; z-index:9;"></div>
 
   <!-- Audio-mix policies (ducking + sync guard) — unit-tested in receiver/test/; must load first. -->
-  <script src="audio-mix.js?v=jun24-reveal2"></script>
+  <script src="audio-mix.js?v=jun24-byo0"></script>
   <!-- window.FlooredTokens (shared palette) — generated from /design-tokens.json; must precede receiver.js. -->
-  <script src="design-tokens.generated.js?v=jun24-reveal2"></script>
-  <script src="receiver.js?v=jun24-reveal2"></script>
+  <script src="design-tokens.generated.js?v=jun24-byo0"></script>
+  <script src="receiver.js?v=jun24-byo0"></script>
 </body>
 </html>
