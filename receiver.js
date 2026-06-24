@@ -83,7 +83,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun24-byo0';
+  var BUILD = 'jun24-byo1';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -834,8 +834,10 @@
   // server). We reassemble the base64 chunks into a Blob and play it from an object URL. Same-origin to this
   // HTTPS page, so no mixed-content problem (unlike an http:// local server). PHASE 0: a debug-triggered
   // proof — receive → Blob → play standalone. Wiring into the cast round (loadVideo + audioBlobId) is later.
-  var byoBuf = null, byoMime = '', byoChunks = 0, byoChunkBytes = 0, byoReceived = 0, byoID = '';
+  var byoBuf = null, byoMime = '', byoChunks = 0, byoChunkBytes = 0, byoID = '';
+  var byoSeen = null, byoNext = 0;   // byoSeen[i]=1 once index i arrived; byoNext = lowest index NOT yet received
   var byoAudioURL = null, lastAudioBlobID = '';
+  function ackByo() { broadcast({ t: 'audioAck', id: byoID, have: byoNext }); }   // contiguous high-water → flow control
   function onAudioInit(d) {
     if (d.id && d.id === lastAudioBlobID && byoAudioURL) {   // dedup: we already hold this exact clip
       broadcast({ t: 'audioAck', id: d.id, have: 'all' });
@@ -843,18 +845,23 @@
     }
     byoID = d.id || ''; byoMime = d.mime || 'audio/mpeg';
     byoChunks = d.chunks || 0; byoChunkBytes = d.chunkBytes || 0;
-    byoBuf = new Uint8Array(d.total || 0); byoReceived = 0;
+    byoBuf = new Uint8Array(d.total || 0); byoSeen = new Uint8Array(byoChunks); byoNext = 0;
     setStatus('receiving audio… 0/' + byoChunks);
+    ackByo();   // tell the phone we're ready (have:0) so its windowed send can begin
   }
   function onAudioChunk(d) {
     if (d.id !== byoID || !byoBuf) return;
     var bin = atob(d.d || ''), off = d.i * byoChunkBytes;
     for (var k = 0; k < bin.length; k++) byoBuf[off + k] = bin.charCodeAt(k);
-    byoReceived++;
-    if ((byoReceived % 16) === 0) { setStatus('receiving audio… ' + byoReceived + '/' + byoChunks); }
-    if (byoReceived >= byoChunks) finalizeByoAudio();   // don't wait on audioEnd
+    if (d.i >= 0 && d.i < byoChunks && !byoSeen[d.i]) {
+      byoSeen[d.i] = 1;
+      while (byoNext < byoChunks && byoSeen[byoNext]) byoNext++;   // advance the contiguous mark over any gap fills
+    }
+    ackByo();   // ack each chunk's progress so the phone advances its window (the acks are tiny)
+    if ((byoNext % 16) === 0) setStatus('receiving audio… ' + byoNext + '/' + byoChunks);
+    if (byoNext >= byoChunks) finalizeByoAudio();
   }
-  function onAudioEnd(d) { if (d.id === byoID) finalizeByoAudio(); }   // backstop if the last chunk was missed
+  function onAudioEnd(d) { if (d.id === byoID && byoNext >= byoChunks) finalizeByoAudio(); }   // backstop
   function finalizeByoAudio() {
     if (!byoBuf) return;   // idempotent (chunk-complete and audioEnd can both call)
     if (byoAudioURL) { try { URL.revokeObjectURL(byoAudioURL); } catch (e) { /* ignore */ } }
