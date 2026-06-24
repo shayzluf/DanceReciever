@@ -83,7 +83,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun24-byo1';
+  var BUILD = 'jun24-byo2';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -869,11 +869,9 @@
     byoAudioURL = URL.createObjectURL(blob);
     lastAudioBlobID = byoID; byoBuf = null;
     broadcast({ t: 'audioAck', id: lastAudioBlobID, have: 'all' });
-    // PHASE 0 proof: play the rebuilt clip standalone so it's audible/verifiable on the TV right now.
-    hideLobby();
-    audio.src = byoAudioURL; audio.load();
-    audio.play().catch(function () { /* autoplay gate in the browser preview; fine on a real Cast device */ });
-    setStatus('BYO audio ready — ' + blob.size + ' bytes, playing');
+    setStatus('BYO audio ready (' + blob.size + ' bytes)');
+    // The clip is held as a Blob now; a BYO cast round plays it via onLoad's `audioBlobId` branch (it does
+    // NOT auto-play here — that would sound before the round starts).
   }
 
   // Draw one live skeleton mapped DIRECTLY from [0,1] frame coords into the box, so the dancer's real
@@ -1090,7 +1088,9 @@
     resetMoves(d);
     setMode('figure');
     applyOrientation('portrait');   // the drawn coach is a tall standing figure → portrait stage + side rail
-    if (d.audioUrl) { audio.src = d.audioUrl; audio.load(); }
+    // BYO music: play the clip we already hold as a Blob (streamed phone→TV); else the catalog mp3 URL.
+    if (d.audioBlobId && byoAudioURL && lastAudioBlobID === d.audioBlobId) { audio.src = byoAudioURL; audio.load(); }
+    else if (d.audioUrl) { audio.src = d.audioUrl; audio.load(); }
     resumeAudio();
     setStatus('loading routine…');
   }
