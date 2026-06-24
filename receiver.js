@@ -83,7 +83,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun24-final';
+  var BUILD = 'jun24-reveal';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -748,9 +748,12 @@
   function onFinal(d) {
     clearPendingFeedback();
     clearGuards(); hideStage(); hideGetReady(); hideBeacons();
-    // Freeze the round on its last frame and reveal the score. Over an embed we must not draw on the
-    // player (ToS) — hide it first so the score sits on a clean background.
-    try { if (videoEl) videoEl.pause(); } catch (e) { /* ignore */ }
+    // HIDE the clip (not just pause it). On Cast a hardware <video> surface composites ABOVE the HTML
+    // layers regardless of z-index, so a paused clip COVERS the #final reveal — the score only ever showed
+    // in figure mode (a <canvas>, which the reveal can cover). display:none drops the surface so the reveal
+    // is visible. (The embed branch below already hides its iframe for the same reason.) onLoadVideo
+    // re-shows the element next round.
+    try { if (videoEl) { videoEl.pause(); videoEl.style.display = 'none'; } } catch (e) { /* ignore */ }
     try { if (audio) audio.pause(); } catch (e) { /* ignore */ }
     if (embedMode) { if (embedApi) { try { embedApi.pause(); } catch (e) {} } if (embedEl) embedEl.style.display = 'none'; }
     document.body.classList.remove('playing');
