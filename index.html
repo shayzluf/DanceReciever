@@ -6,11 +6,11 @@
   <title>Floored TV</title>
   <!-- ?v= cache-busts the JS/CSS on the Cast device when this index reloads; bump it (and BUILD in
        receiver.js) on every receiver change so a stale device can't silently serve old code. -->
-  <link rel="preload" href="nunito-vf.woff2?v=jun23-record" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="nunito-vf.woff2?v=jun24-castlock" as="font" type="font/woff2" crossorigin>
   <!-- Shared palette generated from /design-tokens.json (scripts/gen-design-tokens.mjs) — the SAME source
        the Swift app reads. Load before styles.css so its :root tokens resolve. -->
-  <link rel="stylesheet" href="design-tokens.generated.css?v=jun23-record">
-  <link rel="stylesheet" href="styles.css?v=jun23-record">
+  <link rel="stylesheet" href="design-tokens.generated.css?v=jun24-castlock">
+  <link rel="stylesheet" href="styles.css?v=jun24-castlock">
   <!-- Google Cast Application Framework (CAF) receiver SDK -->
   <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
 </head>
@@ -70,6 +70,17 @@
     <div class="rec-sub">The action is on the phone. Watch the dancer there.</div>
   </div>
 
+  <!-- Cast paywall lock: out of free cast sessions. Rather than a dark TV / stale frame, show a calm
+       "Casting is Plus" card with the install QR (a feature boundary + a passive upsell to the room).
+       Toggled by the castlock message; cleared when a real routine loads, or when the user declines. -->
+  <div id="castlock" class="castlock">
+    <div class="cl-badge">✦ PLUS</div>
+    <div class="cl-head">Casting is a Floored Plus feature</div>
+    <div class="cl-sub">Unlock on the phone to put your routine on the big screen.</div>
+    <div class="cl-qr"><img src="floored-qr.png" alt="Scan to get Floored"></div>
+    <div class="cl-cta">New here? Scan to get Floored · floored.me</div>
+  </div>
+
   <!-- "Set up your stage" framing / paused screen: the live skeleton inside a safe-zone + one instruction. -->
   <div id="stage" class="stage">
     <div class="stage-title"></div>
@@ -99,9 +110,9 @@
   <div id="build" style="position:fixed; right:10px; bottom:8px; font:11px/1 monospace; opacity:0.4; color:#fff; z-index:9;"></div>
 
   <!-- Audio-mix policies (ducking + sync guard) — unit-tested in receiver/test/; must load first. -->
-  <script src="audio-mix.js?v=jun23-record"></script>
+  <script src="audio-mix.js?v=jun24-castlock"></script>
   <!-- window.FlooredTokens (shared palette) — generated from /design-tokens.json; must precede receiver.js. -->
-  <script src="design-tokens.generated.js?v=jun23-record"></script>
-  <script src="receiver.js?v=jun23-record"></script>
+  <script src="design-tokens.generated.js?v=jun24-castlock"></script>
+  <script src="receiver.js?v=jun24-castlock"></script>
 </body>
 </html>

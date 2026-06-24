@@ -60,6 +60,7 @@
   var lobbyStatusEl = document.getElementById('lobbystatus');
   var recordEl = document.getElementById('record');
   var recordMode = false;   // a take is recording on the PHONE → show the "watch the phone" card, hide boxes
+  var castlockEl = document.getElementById('castlock');   // out of free casts → "Casting is Plus" + QR card
 
   // Stage + rail (the split layout). The coach lives in #videostage; the rail's sole job now is the
   // move filmstrip — scores/identity/presence live in the in-sightline #beacons layer.
@@ -82,7 +83,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun23-record';
+  var BUILD = 'jun24-castlock';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -810,6 +811,22 @@
     setStatus('recording on phone');
   }
 
+  // Cast paywall lock: the phone is out of free cast sessions. Rather than a dark TV / stale frame, show a
+  // calm "Casting is Plus" boundary + the install QR (a passive upsell to the room). `on` raises it on a
+  // blocked cast; `off` (decline) clears it back to the idle lobby. A real round's load also clears it.
+  function hideCastLock() { if (castlockEl) castlockEl.style.display = 'none'; }
+  function onCastLock(d) {
+    if (d.on) {
+      clearPendingFeedback(); clearGuards();
+      hideStage(); hideFinal(); hideBeacons(); clearBeacons(); hideGetReady(); hideRecordCard();
+      if (castlockEl) castlockEl.style.display = 'flex';
+      setStatus('casting is Plus');
+    } else {
+      hideCastLock();
+      showLobby();   // declined / cleared → back to the idle install QR
+    }
+  }
+
   // Draw one live skeleton mapped DIRECTLY from [0,1] frame coords into the box, so the dancer's real
   // position (and any edge clipping) is visible — unlike drawFigure, which fills the screen. Rendered as
   // a neon tube whose HALO is the lane color (the framing "identity beat": a well-framed dancer glows in
@@ -1009,7 +1026,7 @@
 
   function onLoad(d) {
     clearPendingFeedback();
-    recordMode = false; hideRecordCard();   // a real routine supersedes a record take (insurance vs a missed record:stop)
+    recordMode = false; hideRecordCard(); hideCastLock();   // a real routine supersedes a record take / cast lock
     hideFinal(); clearGuards();
     exitVideoMode();
     if (embedEl) { embedEl.style.display = 'none'; embedEl.innerHTML = ''; }
@@ -1034,7 +1051,7 @@
   // Our own content → feedback overlays are allowed (presentFeedback only suppresses them for embeds).
   function onLoadVideo(d) {
     clearPendingFeedback();
-    recordMode = false; hideRecordCard();   // a real routine supersedes a record take (insurance vs a missed record:stop)
+    recordMode = false; hideRecordCard(); hideCastLock();   // a real routine supersedes a record take / cast lock
     hideFinal(); clearGuards();
     poseFrames = []; loaded = false; mockMode = false;
     embedMode = false; embedPlaying = false; embedApi = null; embedPlayer = null;
@@ -1073,7 +1090,7 @@
   // Reference-don't-host on the TV: load the routine's platform video (real video + original sound).
   function onLoadEmbed(d) {
     clearPendingFeedback();
-    recordMode = false; hideRecordCard();   // a real routine supersedes a record take (insurance vs a missed record:stop)
+    recordMode = false; hideRecordCard(); hideCastLock();   // a real routine supersedes a record take / cast lock
     hideFinal(); clearGuards();
     exitVideoMode();
     loaded = false; mockMode = false;
@@ -1301,6 +1318,7 @@
         case 'getready': onGetReady(d); break;
         case 'go': onGo(d); break;
         case 'record': onRecord(d); break;
+        case 'castlock': onCastLock(d); break;
         case 'framing': onFraming(d); break;
         case 'guard': onGuard(d); break;
         case 'dbgpose': onDbgPose(d); break;
