@@ -83,7 +83,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun24-center';
+  var BUILD = 'jun24-hello';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -1330,6 +1330,11 @@
       senders[e.senderId] = true;
       setStatus('phone connected');
       updateLobbyStatus();   // idle screen flips to "connected — pick a song"
+      // Announce a fresh boot to the (re)connecting phone. After a receiver PAGE RELOAD mid-session the
+      // phone's Cast session stays up (no disconnect event fires), so this `hello` is the ONLY signal it
+      // gets that the TV reset and needs re-initialising. The phone ignores it unless a cast round is live
+      // (so a normal first connect is harmless); mid-round it ends the round cleanly so a re-tap reloads us.
+      try { context.sendCustomMessage(NS, e.senderId, { t: 'hello' }); } catch (ex) { /* sender vanished */ }
     });
     context.addEventListener(cast.framework.system.EventType.SENDER_DISCONNECTED, function (e) {
       delete senders[e.senderId];
