@@ -84,18 +84,19 @@ body.debug #videostage > #dbgskeleton { display: block; }
 }
 #filmstrip { display: flex; gap: 1.6vh; flex: 1 1 auto; align-items: center; justify-content: center; }
 
-/* Portrait clip → centre stage + right rail; vertical filmstrip. */
-body.orient-portrait #videostage { left: 12vw; width: 40vw; top: 0; height: 100vh; }
-body.orient-portrait #rail { left: 55vw; width: 31vw; top: 0; height: 100vh; }
+/* Portrait → CENTRE the coach (figure/video) + a slim right rail; vertical filmstrip. This is the BASE,
+   so it also applies in the idle / transient no-mode state: centring must NOT depend on a mode class
+   being present. Previously the base was the off-centre 12vw/40vw split and only .mode-figure/.mode-video
+   re-centred — so any moment the body lost its mode class (a desync between rounds) fell back to the
+   off-centre split and STUCK there: the "video not centred on the TV / old arrangement" bug. Defaulting
+   to centred makes that fallback correct; only embed deviates (just below). */
+body.orient-portrait #videostage { left: 28vw; width: 44vw; top: 0; height: 100vh; }
+body.orient-portrait #rail { left: 74vw; width: 24vw; top: 0; height: 100vh; }
 body.orient-portrait #filmstrip { flex-direction: column; }
 
-/* Figure/video portrait: the drawn coach (or the user's own clip) is the hero, so CENTRE it on screen
-   with a slimmer right rail — the old 12vw-left / 40vw split read as off-centre. Embed mode keeps the
-   base split (the platform iframe owns the stage, and its beacons/rail are positioned off it). */
-body.orient-portrait.mode-figure #videostage,
-body.orient-portrait.mode-video #videostage { left: 28vw; width: 44vw; }
-body.orient-portrait.mode-figure #rail,
-body.orient-portrait.mode-video #rail { left: 74vw; width: 24vw; }
+/* Embed portrait keeps the wider left-hugging split — the platform iframe owns the stage, and its
+   beacons/rail are positioned off it (the embed rail's own offset lives in the embed section below). */
+body.orient-portrait.mode-embed #videostage { left: 12vw; width: 40vw; }
 
 /* Landscape clip → top stage + bottom rail; horizontal filmstrip. */
 body.orient-landscape #videostage { left: 0; width: 100vw; top: 0; height: 62vh; }
