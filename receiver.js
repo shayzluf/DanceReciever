@@ -83,7 +83,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun24-byo2';
+  var BUILD = 'jun24-byo3';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -837,10 +837,15 @@
   var byoBuf = null, byoMime = '', byoChunks = 0, byoChunkBytes = 0, byoID = '';
   var byoSeen = null, byoNext = 0;   // byoSeen[i]=1 once index i arrived; byoNext = lowest index NOT yet received
   var byoAudioURL = null, lastAudioBlobID = '';
+  var CAST_AUDIO_MAX = 25 * 1024 * 1024;   // refuse an oversized clip (protect the Chromecast's RAM)
   function ackByo() { broadcast({ t: 'audioAck', id: byoID, have: byoNext }); }   // contiguous high-water → flow control
   function onAudioInit(d) {
     if (d.id && d.id === lastAudioBlobID && byoAudioURL) {   // dedup: we already hold this exact clip
       broadcast({ t: 'audioAck', id: d.id, have: 'all' });
+      return;
+    }
+    if ((d.total || 0) > CAST_AUDIO_MAX) {   // too big to hold as a Blob → reject; the phone falls back to phone-only
+      broadcast({ t: 'audioAck', id: d.id, have: 'reject' });
       return;
     }
     byoID = d.id || ''; byoMime = d.mime || 'audio/mpeg';
