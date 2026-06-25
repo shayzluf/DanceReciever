@@ -83,7 +83,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun24-byo3';
+  var BUILD = 'jun24-byo4';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -138,11 +138,17 @@
   // starts any routine activity (see the message listener) and restored on stop / disconnect.
   // The QR is for the BYSTANDERS; the status line beneath it is for the CASTER (waiting vs "you're
   // connected — pick a song"), so the idle screen never reads as a dead end to the person who cast.
+  var byoLobbyStatus = null;   // {text, ok} override while a BYO track is streaming/ready (Phase 4); null = default
   function updateLobbyStatus() {
     if (!lobbyStatusEl) return;
+    if (byoLobbyStatus) {   // mirror the phone's "sending your music" / "ready" cue on the TV the music plays from
+      lobbyStatusEl.textContent = byoLobbyStatus.text;
+      lobbyStatusEl.classList.toggle('ok', byoLobbyStatus.ok);
+      return;
+    }
     var connected = Object.keys(senders).length > 0;
     lobbyStatusEl.textContent = connected
-      ? 'Phone connected — pick a song and hit Dance!'
+      ? 'Phone connected, pick a song and hit Dance!'
       : 'Dancing? Open Floored on your phone and tap the Cast button';
     lobbyStatusEl.classList.toggle('ok', connected);
   }
@@ -842,6 +848,7 @@
   function onAudioInit(d) {
     if (d.id && d.id === lastAudioBlobID && byoAudioURL) {   // dedup: we already hold this exact clip
       broadcast({ t: 'audioAck', id: d.id, have: 'all' });
+      byoLobbyStatus = { text: 'Your music is ready, tap Dance', ok: true }; updateLobbyStatus();
       return;
     }
     if ((d.total || 0) > CAST_AUDIO_MAX) {   // too big to hold as a Blob → reject; the phone falls back to phone-only
@@ -852,6 +859,7 @@
     byoChunks = d.chunks || 0; byoChunkBytes = d.chunkBytes || 0;
     byoBuf = new Uint8Array(d.total || 0); byoSeen = new Uint8Array(byoChunks); byoNext = 0;
     setStatus('receiving audio… 0/' + byoChunks);
+    byoLobbyStatus = { text: 'Getting your music ready…', ok: false }; updateLobbyStatus();
     ackByo();   // tell the phone we're ready (have:0) so its windowed send can begin
   }
   function onAudioChunk(d) {
@@ -875,6 +883,7 @@
     lastAudioBlobID = byoID; byoBuf = null;
     broadcast({ t: 'audioAck', id: lastAudioBlobID, have: 'all' });
     setStatus('BYO audio ready (' + blob.size + ' bytes)');
+    byoLobbyStatus = { text: 'Your music is ready, tap Dance', ok: true }; updateLobbyStatus();
     // The clip is held as a Blob now; a BYO cast round plays it via onLoad's `audioBlobId` branch (it does
     // NOT auto-play here — that would sound before the round starts).
   }
