@@ -225,6 +225,14 @@ body.mode-embed.orient-portrait .beacon { height: 8vh; padding: 0 0.9vw; gap: 0.
   display: flex; align-items: center; justify-content: center;
   font-size: 1.8vh; font-weight: 800; color: #fff;
 }
+/* GO→beacon continuity: the player's PLAYER SELECT selfie crossfades in as the dot's face (small). When
+   absent it stays hidden and the lane number shows through; a crossfade is enough (no FLIP). */
+.beacon .bface {
+  position: absolute; inset: 0; border-radius: 50%; background-size: cover; background-position: center;
+  opacity: 0; transition: opacity 0.4s ease;
+}
+.beacon .bdot.hasface .bface { opacity: 1; }
+.beacon .bdot.hasface span { opacity: 0; }   /* the selfie replaces the number */
 .beacon .bring {  /* guard rejoin ring around the dot (conic fill 0–100, JS-set --p) */
   position: absolute; inset: -0.7vh; border-radius: 50%;
   background: conic-gradient(var(--lc, #fff) calc(var(--p, 0) * 1%), transparent 0);
@@ -362,6 +370,50 @@ body.mode-embed.orient-portrait .beacon .bscore { font-size: 4vh; }
 .final-scores.n4 .final-num { font-size: 8.6vh; }
 .final-scores.n4 .final-stars { font-size: 2.9vh; }
 .final-scores.n4 .final-lane { font-size: 2.2vh; }
+
+/* Face medallion above the hero score — a lane-ringed circle holding the player's selfie (from the
+   PLAYER SELECT ceremony) or, if none was held, the lane-color monogram "Pn". Sized per player count by
+   the .n1..n4 steps below so 4 medallions + scores still clear the 16:9 frame. The winner's ring goes
+   gold and a crown floats above (.win below). The <img> covers the well; no selfie → the monogram shows. */
+.final-face {
+  position: relative;
+  width: 14vh; height: 14vh; border-radius: 50%;
+  flex: 0 0 auto; overflow: hidden;
+  background: radial-gradient(120% 120% at 50% 30%, color-mix(in srgb, var(--lc, #fff) 46%, #1a1a24), #0e0e16 78%);
+  border: 0.5vh solid var(--lc, #fff);
+  box-shadow: 0 0 3vh var(--lcglow, transparent), inset 0 0.2vh 0 rgba(255, 255, 255, 0.16);
+}
+.final-face img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.final-face .mono {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 7vh; font-weight: 900; line-height: 1; color: var(--lc, #fff);
+  text-shadow: 0 0 1.6vh var(--lcglow, transparent);
+}
+/* Crown floats above the winner's medallion. */
+.final-face .crown {
+  position: absolute; left: 50%; top: -3.4vh; transform: translateX(-50%);
+  font-size: 4vh; line-height: 1; color: var(--gold);
+  filter: drop-shadow(0 0 1.4vh rgba(255, 212, 0, 0.7)); pointer-events: none;
+}
+/* Step the medallion sizes down with player count (matches the hero-score steps above). */
+.final-scores.n1 .final-face { width: 24vh; height: 24vh; }
+.final-scores.n1 .final-face .mono { font-size: 12vh; }
+.final-scores.n1 .final-face .crown { font-size: 6vh; top: -5vh; }
+.final-scores.n2 .final-face { width: 18vh; height: 18vh; }
+.final-scores.n2 .final-face .mono { font-size: 9vh; }
+.final-scores.n2 .final-face .crown { font-size: 4.8vh; top: -4.2vh; }
+.final-scores.n3 .final-face { width: 14vh; height: 14vh; }
+.final-scores.n3 .final-face .mono { font-size: 7vh; }
+.final-scores.n3 .final-face .crown { font-size: 4vh; top: -3.4vh; }
+.final-scores.n4 .final-face { width: 11vh; height: 11vh; }
+.final-scores.n4 .final-face .mono { font-size: 5.4vh; }
+.final-scores.n4 .final-face .crown { font-size: 3.2vh; top: -2.8vh; }
+/* Winner: gold ring + a gold-warmed glow on the medallion (echoing the card's .win treatment). */
+.final-scores.multi .final-player.win .final-face {
+  border-color: var(--gold);
+  box-shadow: 0 0 3.6vh rgba(255, 212, 0, 0.5), inset 0 0.2vh 0 rgba(255, 255, 255, 0.2);
+}
+
 /* Entrance pop. CRITICAL: the resting state of .final-scores is opacity 1 (visible) — the cards pop in
    via this animation, NOT an inline opacity 0→1 transition (which could stick at 0 on a slow Cast device,
    hiding every score while only the FINAL title showed). If the animation never runs, the cards still show. */
@@ -512,3 +564,129 @@ body.playing .hud { opacity: 0; transition: opacity 0.6s ease; }
 /* Caster guidance under the bystander CTA: dim while waiting, green once a phone is linked. */
 .lobby-status { margin-top: 1.2vh; font-size: 2vh; font-weight: 600; opacity: 0.55; }
 .lobby-status.ok { color: var(--green); opacity: 0.95; }
+
+/* ============================================================================
+   PLAYER SELECT — the multiplayer pre-round "character select" ceremony. One
+   slot card per lane (P1..P4, left→right = the mirrored floor), each in its lane
+   color, walking through WAITING → ACTIVE (you're up, framing) → LOCKED/READY.
+   Full-bleed z10 cover, like the framing stage it sits beside in the lead-in.
+   Nodes are built once per ceremony and mutated in place (Chromecast budget:
+   transform/opacity animation only). Shares the .final-player glass recipe.
+   ============================================================================ */
+#playerselect {
+  position: fixed; inset: 0; z-index: 10;
+  display: none; flex-direction: column; align-items: center; justify-content: center; gap: 4.5vh;
+  background: radial-gradient(120vh 90vh at 50% 30%, #16131f 0%, var(--bg) 70%);
+}
+.ps-head { display: flex; flex-direction: column; align-items: center; gap: 1vh; text-align: center; }
+.ps-title {
+  font-size: 5.4vh; font-weight: 900; letter-spacing: 0.14em;
+  background: linear-gradient(92deg, var(--pink), var(--blue) 70%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  filter: drop-shadow(0 1.2vh 2vh rgba(0, 0, 0, 0.5));
+}
+.ps-sub { font-size: 2.8vh; font-weight: 700; color: rgba(255, 255, 255, 0.82); }
+.ps-row {
+  display: flex; gap: 2vw; align-items: stretch; justify-content: center;
+  width: 94vw; max-width: 94vw;
+}
+.ps-foot { font-size: 2.2vh; font-weight: 700; color: rgba(255, 255, 255, 0.62); min-height: 2.6vh; text-align: center; }
+
+/* One slot card per lane — the .final-player glass + lane border + glow recipe. */
+.ps-slot {
+  position: relative; flex: 1 1 0; min-width: 0; max-width: 42vw; overflow: visible;
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 1.8vh;
+  padding: 3vh 2vw;
+  border-radius: 2.6vh;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0) 50%), var(--glass);
+  border: 0.34vh solid var(--lc, var(--hair));
+  box-shadow: 0 0 4.5vh var(--lcglow, transparent), 0 2vh 5vh rgba(0, 0, 0, 0.5),
+              inset 0 0.2vh 0 rgba(255, 255, 255, 0.16);
+  transition: opacity 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
+}
+/* WAITING/JOIN: dim, no glow, hairline ring — present but not yet in the game. */
+.ps-slot.waiting { opacity: 0.62; border-color: var(--lcdim, var(--hair)); box-shadow: 0 1.4vh 4vh rgba(0, 0, 0, 0.45); }
+
+/* Identity chip: lane dot + Pn (mirrors .final-lane). */
+.ps-lane { display: flex; align-items: center; gap: 0.7vw; font-size: 2.6vh; font-weight: 800; color: var(--lc, #fff); letter-spacing: 0.03em; }
+.ps-lane .dot { width: 1.9vh; height: 1.9vh; border-radius: 50%; background: var(--lc, #fff); flex: 0 0 auto; }
+
+/* The face WELL: a lane-ringed circle that holds the framing ring, monogram, selfie, the walk-up chevron,
+   and the LOCKED chip. Sized by HEIGHT so the row fits the frame; the children below all anchor to it. */
+.ps-well {
+  position: relative; width: 18vh; height: 18vh; border-radius: 50%; flex: 0 0 auto;
+  background: radial-gradient(120% 120% at 50% 30%, color-mix(in srgb, var(--lc, #fff) 46%, #1a1a24), #0e0e16 78%);
+  border: 0.4vh solid var(--lcdim, var(--hair));
+  display: flex; align-items: center; justify-content: center;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+.ps-well img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: 50%; display: none; }
+.ps-well .mono {
+  font-size: 9vh; font-weight: 900; line-height: 1; color: var(--lc, #fff);
+  text-shadow: 0 0 1.8vh var(--lcglow, transparent);
+}
+/* Conic framing ring around the well — fills to --pct (0..1, JS-set), the front-camera framing progress.
+   Shown only on the ACTIVE slot. Mask cuts the centre so the ring rides just outside the well edge. */
+.ps-well .ring {
+  position: absolute; inset: -1.2vh; border-radius: 50%; display: none;
+  background: conic-gradient(var(--lc, #fff) calc(var(--pct, 0) * 360deg), transparent 0);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 0.7vh), #000 calc(100% - 0.6vh));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 0.7vh), #000 calc(100% - 0.6vh));
+}
+/* A bobbing double-chevron above the well — "walk up." Shown only on the ACTIVE slot. */
+.ps-well .chev {
+  position: absolute; left: 50%; top: -4.6vh; transform: translateX(-50%);
+  font-size: 3.6vh; line-height: 0.7; font-weight: 900; color: var(--lc, #fff);
+  text-shadow: 0 0 1.6vh var(--lcglow, transparent); display: none;
+}
+.ps-well .chev::before { content: "\2304\A\2304"; white-space: pre; display: block; text-align: center; }
+/* A rotated "LOCKED" chip pinned at the well bottom — shown only on a LOCKED slot. */
+.ps-well .chip {
+  position: absolute; left: 50%; bottom: -1.4vh; transform: translateX(-50%) rotate(-7deg);
+  display: none; align-items: center; gap: 0.4vw; white-space: nowrap;
+  font-size: 1.9vh; font-weight: 900; letter-spacing: 0.08em; color: #0e0e16;
+  padding: 0.5vh 1.4vh; border-radius: 99vh; background: var(--lc, #fff);
+  box-shadow: 0 0.8vh 2.4vh rgba(0, 0, 0, 0.5);
+}
+
+/* Status label + sub-line under the well. */
+.ps-label { font-size: 2.8vh; font-weight: 900; letter-spacing: 0.04em; color: var(--lc, #fff); text-align: center; }
+.ps-note { font-size: 2vh; font-weight: 600; color: rgba(255, 255, 255, 0.62); text-align: center; max-width: 22vw; min-height: 2.4vh; }
+
+/* ---- ACTIVE: "you're up" — full bright, breathing halo, chevron + framing ring. ---- */
+.ps-slot.active { opacity: 1; }
+.ps-slot.active .ps-well { border-color: var(--lc, #fff); }
+.ps-slot.active .ps-well .ring,
+.ps-slot.active .ps-well .chev { display: block; }
+.ps-slot.active { animation: psbreathe 2.2s ease-in-out infinite; }
+.ps-slot.active .ps-well .chev { animation: psbob 1.1s ease-in-out infinite; }
+@keyframes psbreathe {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 4.5vh var(--lcglow, transparent), 0 2vh 5vh rgba(0, 0, 0, 0.5), inset 0 0.2vh 0 rgba(255, 255, 255, 0.16); }
+  50% { transform: scale(1.035); box-shadow: 0 0 7vh var(--lcglow, transparent), 0 2vh 5vh rgba(0, 0, 0, 0.5), inset 0 0.2vh 0 rgba(255, 255, 255, 0.2); }
+}
+@keyframes psbob { 0%, 100% { transform: translateX(-50%) translateY(0); } 50% { transform: translateX(-50%) translateY(0.8vh); } }
+
+/* ---- LOCKED / READY: full halo, the selfie (or monogram) in the well, the LOCKED chip. ---- */
+.ps-slot.locked { opacity: 1; }
+.ps-slot.locked .ps-well { border-color: var(--lc, #fff); box-shadow: 0 0 3vh var(--lcglow, transparent), inset 0 0.2vh 0 rgba(255, 255, 255, 0.16); }
+.ps-slot.locked .ps-well .chip { display: inline-flex; }
+.ps-slot.locked.hasface .ps-well img { display: block; }
+.ps-slot.locked.hasface .ps-well .mono { display: none; }
+
+/* ---- READY: every slot pulses in unison once all are locked. ---- */
+.ps-row.ready .ps-slot { animation: pspulse 1.4s ease-in-out 2; }
+@keyframes pspulse {
+  0%, 100% { box-shadow: 0 0 4.5vh var(--lcglow, transparent), 0 2vh 5vh rgba(0, 0, 0, 0.5), inset 0 0.2vh 0 rgba(255, 255, 255, 0.16); }
+  50% { box-shadow: 0 0 8vh var(--lcglow, transparent), 0 0 3vh rgba(255, 255, 255, 0.25), 0 2vh 5vh rgba(0, 0, 0, 0.5), inset 0 0.2vh 0 rgba(255, 255, 255, 0.22); }
+}
+
+/* Step slot sizing down as players are added — keeps 1..4 inside the 16:9 frame. */
+#playerselect .ps-row.n1 .ps-well { width: 26vh; height: 26vh; }
+#playerselect .ps-row.n1 .ps-well .mono { font-size: 13vh; }
+#playerselect .ps-row.n2 .ps-well { width: 22vh; height: 22vh; }
+#playerselect .ps-row.n2 .ps-well .mono { font-size: 11vh; }
+#playerselect .ps-row.n3 .ps-well { width: 18vh; height: 18vh; }
+#playerselect .ps-row.n4 .ps-well { width: 14vh; height: 14vh; }
+#playerselect .ps-row.n4 .ps-well .mono { font-size: 7vh; }
+#playerselect .ps-row.n4 .ps-label { font-size: 2.3vh; }
+#playerselect .ps-row.n4 .ps-note { font-size: 1.7vh; max-width: 18vw; }

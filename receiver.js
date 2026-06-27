@@ -61,6 +61,7 @@
   var recordEl = document.getElementById('record');
   var recordMode = false;   // a take is recording on the PHONE → show the "watch the phone" card, hide boxes
   var castlockEl = document.getElementById('castlock');   // out of free casts → "Casting is Plus" + QR card
+  var selectEl = document.getElementById('playerselect'); // multiplayer pre-round "character select" ceremony
 
   // Stage + rail (the split layout). The coach lives in #videostage; the rail's sole job now is the
   // move filmstrip — scores/identity/presence live in the in-sightline #beacons layer.
@@ -83,7 +84,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun24-byo4';
+  var BUILD = 'jun25-select';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -411,7 +412,7 @@
     el.style.setProperty('--lcdim', laneRGBA(lane, 0.5));
     el.style.setProperty('--lcglow', laneRGBA(lane, 0.3));
     el.innerHTML = '<i class="bwash"></i>'
-      + '<div class="bdot"><i class="bring"></i><span>' + (lane + 1) + '</span></div>'
+      + '<div class="bdot"><i class="bring"></i><i class="bface"></i><span>' + (lane + 1) + '</span></div>'
       + '<div class="bscore">0</div>'
       + '<div class="bslot"></div>'
       + '<div class="bstep">← STEP IN</div>'
@@ -434,8 +435,11 @@
       slot: el.querySelector('.bslot'),
       step: el.querySelector('.bstep'),
       plus: el.querySelector('.bplus'),
+      face: el.querySelector('.bface'),
       shown: 0, target: 0, tick: null, ringOn: false
     };
+    // GO→beacon continuity: if this lane locked a selfie in the PLAYER SELECT ceremony, wear it on the dot.
+    if (laneFaces[lane]) { B.face.style.backgroundImage = 'url(' + laneFaces[lane] + ')'; B.dot.classList.add('hasface'); }
     if (Object.keys(beacons).length >= 3) beaconsEl.classList.add('many');
     return B;
   }
@@ -720,9 +724,17 @@
       var stars = '', n = p.stars || 0;
       for (var s = 0; s < 5; s++) stars += (s < n) ? '★' : '☆';
       var isWin = players.length > 1 && lane === winLane;
-      // One lane-framed glass card per player (identity dot + Pn, white hero score, gold stars).
+      // Face medallion above the hero score: the player's selfie (held from the PLAYER SELECT ceremony via
+      // p.faceId) if we have it, else the lane-color monogram. The winner also gets a floating gold crown.
+      var faceURL = (p.faceId && faces[p.faceId]) ? faces[p.faceId] : null;
+      var medallion = '<div class="final-face">'
+        + (isWin ? '<span class="crown">♛</span>' : '')
+        + (faceURL ? '<img alt="" src="' + faceURL + '">' : '<span class="mono">P' + (lane + 1) + '</span>')
+        + '</div>';
+      // One lane-framed glass card per player (face medallion + identity dot + Pn, white hero score, gold stars).
       html += '<div class="final-player' + (isWin ? ' win' : '') + '"'
         + ' style="--lc:' + laneColor(lane) + ';--lcglow:' + laneRGBA(lane, 0.45) + '">'
+        + medallion
         + '<div class="final-lane"><i class="dot"></i>P' + (lane + 1) + '</div>'
         + '<div class="final-num">' + Math.round(p.total || 0) + '</div>'
         + '<div class="final-stars">' + stars + '</div></div>';
@@ -750,7 +762,7 @@
 
   function onFinal(d) {
     clearPendingFeedback();
-    clearGuards(); hideStage(); hideGetReady(); hideBeacons();
+    clearGuards(); hideStage(); hideGetReady(); hideBeacons(); hideSelect();   // faces[] survive the reveal (medallions); only the ceremony layer hides
     // HIDE the clip (not just pause it). On Cast a hardware <video> surface composites ABOVE the HTML
     // layers regardless of z-index, so a paused clip COVERS the #final reveal — the score only ever showed
     // in figure mode (a <canvas>, which the reveal can cover). display:none drops the surface so the reveal
@@ -768,7 +780,7 @@
 
   function hideGetReady() { if (getreadyEl) getreadyEl.style.display = 'none'; }
   function onGetReady(d) {
-    hideStage(); hideFinal();
+    hideStage(); hideFinal(); hideSelect();   // the ceremony handed off → the countdown owns the screen
     // Beacon roll-call: the framing screen's lanes pop in left→right (100ms stagger), each in its
     // lane color — position + color binding lands right before GO. Idempotent across the 5 counts.
     // Skipped in record mode: a take has no score/identity boxes (the action is on the phone, behind
@@ -814,7 +826,7 @@
     }
     recordMode = true;             // 'start' (default): drop any stale boxes and raise the full-bleed card NOW so
     clearPendingFeedback(); clearGuards();   // its bg covers the empty coach/rail layers (the role the lobby plays at idle).
-    hideStage(); hideFinal(); hideBeacons(); clearBeacons();
+    hideStage(); hideFinal(); hideBeacons(); clearBeacons(); hideSelect();
     if (recordEl) recordEl.classList.add('counting');   // count shows just the number on the card's dark bg; text fades in at GO
     showRecordCard();
     setStatus('recording on phone');
@@ -827,7 +839,7 @@
   function onCastLock(d) {
     if (d.on) {
       clearPendingFeedback(); clearGuards();
-      hideStage(); hideFinal(); hideBeacons(); clearBeacons(); hideGetReady(); hideRecordCard();
+      hideStage(); hideFinal(); hideBeacons(); clearBeacons(); hideGetReady(); hideRecordCard(); hideSelect();
       if (castlockEl) castlockEl.style.display = 'flex';
       setStatus('casting is Plus');
     } else {
@@ -886,6 +898,189 @@
     byoLobbyStatus = { text: 'Your music is ready, tap Dance', ok: true }; updateLobbyStatus();
     // The clip is held as a Blob now; a BYO cast round plays it via onLoad's `audioBlobId` branch (it does
     // NOT auto-play here — that would sound before the round starts).
+  }
+
+  // ---- Player faces: the phone streams each player's selfie to us over the SAME data channel as the BYO
+  // audio (never a server), chunked base64 → Uint8Array → Blob → objectURL, with ACK windowing for flow
+  // control. Faces are tiny (usually one chunk) but up to 4 can arrive interleaved, so we keep a per-id
+  // assembler keyed by faceId. Held in `faces[id]` (objectURL) for the PLAYER SELECT medallions, the GO→
+  // beacon continuity, and the final reveal; revoked only on facesClear / load / stop / the hello reload.
+  var faces = {};            // faceId → objectURL (decoded selfie, ready to use as <img> src)
+  var faceAsm = {};          // faceId → { buf, seen, next, chunks, chunkBytes, mime } in-flight assembly
+  var FACE_MAX = 256 * 1024; // refuse an oversized selfie (protect the Chromecast's RAM)
+  function ackFace(id, have) { broadcast({ t: 'faceAck', id: id, have: have }); }
+  function onFaceInit(d) {
+    var id = d.id || '';
+    if (faces[id]) { ackFace(id, 'all'); return; }   // dedup: we already hold this exact face
+    if ((d.total || 0) > FACE_MAX) { ackFace(id, 'reject'); return; }   // too big → phone keeps the monogram
+    faceAsm[id] = {
+      buf: new Uint8Array(d.total || 0), seen: new Uint8Array(d.chunks || 0), next: 0,
+      chunks: d.chunks || 0, chunkBytes: d.chunkBytes || 0, mime: d.mime || 'image/jpeg'
+    };
+    ackFace(id, 0);   // ready (have:0) → the phone's windowed send can begin
+  }
+  function onFaceChunk(d) {
+    var A = faceAsm[d.id]; if (!A || !A.buf) return;
+    var bin = atob(d.d || ''), off = d.i * A.chunkBytes;
+    for (var k = 0; k < bin.length; k++) A.buf[off + k] = bin.charCodeAt(k);
+    if (d.i >= 0 && d.i < A.chunks && !A.seen[d.i]) {
+      A.seen[d.i] = 1;
+      while (A.next < A.chunks && A.seen[A.next]) A.next++;   // advance the contiguous high-water over gap fills
+    }
+    ackFace(d.id, A.next);
+    if (A.next >= A.chunks) finalizeFace(d.id);
+  }
+  function onFaceEnd(d) { var A = faceAsm[d.id]; if (A && A.next >= A.chunks) finalizeFace(d.id); }   // backstop
+  function finalizeFace(id) {
+    var A = faceAsm[id]; if (!A || !A.buf) return;   // idempotent (chunk-complete and faceEnd can both call)
+    var url = URL.createObjectURL(new Blob([A.buf], { type: A.mime }));
+    faces[id] = url; delete faceAsm[id];
+    ackFace(id, 'all');
+    // If a slot is already locked to this faceId (LOCK arrived before the bytes finished), drop the selfie
+    // into its well now. Same for the final reveal, which re-reads faces[] when it builds.
+    applyFaceToSlots(id);
+  }
+  function clearFaces() {
+    for (var id in faces) { if (faces.hasOwnProperty(id)) { try { URL.revokeObjectURL(faces[id]); } catch (e) { /* ignore */ } } }
+    faces = {}; faceAsm = {};
+    for (var lane in laneFaces) { if (laneFaces.hasOwnProperty(lane)) delete laneFaces[lane]; }
+  }
+
+  // ---- PLAYER SELECT — the multiplayer "character select" ceremony (one slot card per lane). Built once
+  // per ceremony (step:'open') and mutated in place; states walk WAITING → ACTIVE → LOCKED/READY. Selfies
+  // arrive over the face channel above; a slot that locks with faceId null shows a lane monogram (DECLINED,
+  // visually equal to a face slot). On lock we also remember laneFaces[lane] for the beacon-dot continuity.
+  var psRowEl = selectEl ? selectEl.querySelector('.ps-row') : null;
+  var psFootEl = selectEl ? selectEl.querySelector('.ps-foot') : null;
+  var psSlots = {};          // lane → { el, well, img, mono, ring, chip, label, note, faceId }
+  var laneFaces = {};        // lane → objectURL of the locked-in selfie (handed to the round's beacon dots)
+
+  function buildSelectRoster(lanes) {
+    if (!psRowEl) return;
+    psSlots = {};
+    psRowEl.innerHTML = '';
+    psRowEl.className = 'ps-row n' + Math.min(4, Math.max(1, lanes.length));
+    for (var i = 0; i < lanes.length; i++) {
+      var lane = lanes[i];
+      var el = document.createElement('div');
+      el.className = 'ps-slot waiting';
+      el.style.setProperty('--lc', laneColor(lane));
+      el.style.setProperty('--lcdim', laneRGBA(lane, 0.5));
+      el.style.setProperty('--lcglow', laneRGBA(lane, 0.3));
+      el.innerHTML = '<div class="ps-lane"><i class="dot"></i>P' + (lane + 1) + '</div>'
+        + '<div class="ps-well">'
+        +   '<i class="ring"></i>'
+        +   '<div class="chev"></div>'
+        +   '<span class="mono">P' + (lane + 1) + '</span>'
+        +   '<img alt="">'
+        +   '<span class="chip">✓ LOCKED</span>'
+        + '</div>'
+        + '<div class="ps-label">JOIN</div>'
+        + '<div class="ps-note">Tap join on your phone.</div>';
+      psRowEl.appendChild(el);
+      psSlots[lane] = {
+        el: el,
+        well: el.querySelector('.ps-well'),
+        img: el.querySelector('.ps-well img'),
+        mono: el.querySelector('.ps-well .mono'),
+        ring: el.querySelector('.ps-well .ring'),
+        chip: el.querySelector('.ps-well .chip'),
+        label: el.querySelector('.ps-label'),
+        note: el.querySelector('.ps-note'),
+        faceId: null
+      };
+    }
+  }
+
+  function setSlotState(lane, state) {
+    var S = psSlots[lane]; if (!S) return;
+    S.el.classList.remove('waiting', 'active', 'locked');
+    S.el.classList.add(state);
+    if (state === 'active') {
+      S.label.textContent = "YOU'RE UP";
+      S.note.textContent = 'Walk up, hold still.';
+      S.ring.style.setProperty('--pct', 0);
+    } else if (state === 'waiting') {
+      S.label.textContent = 'JOIN';
+      S.note.textContent = 'Tap join on your phone.';
+    }
+  }
+
+  // Drop a decoded selfie into any slot already locked to that faceId (handles bytes-after-LOCK ordering).
+  function applyFaceToSlots(id) {
+    if (!faces[id]) return;
+    for (var lane in psSlots) {
+      if (!psSlots.hasOwnProperty(lane)) continue;
+      var S = psSlots[lane];
+      if (S.faceId === id) {
+        S.img.src = faces[id];
+        S.el.classList.add('hasface');
+        laneFaces[lane] = faces[id];   // keep the beacon-dot continuity in sync if the face landed late
+      }
+    }
+  }
+
+  function lockSlot(lane, faceId, info) {
+    var S = psSlots[lane]; if (!S) return;
+    S.faceId = faceId || null;
+    setSlotState(lane, 'locked');
+    var url = (faceId && faces[faceId]) ? faces[faceId] : null;
+    if (url) {
+      S.img.src = url;
+      S.el.classList.add('hasface');
+      laneFaces[lane] = url;             // GO→beacon: this lane's dot wears the selfie next round
+      S.label.textContent = 'READY';
+      S.note.textContent = info || '';
+    } else if (faceId) {
+      // LOCK named a face but the bytes haven't finished — applyFaceToSlots() will fill it on finalize.
+      S.el.classList.remove('hasface');
+      S.label.textContent = 'READY';
+      S.note.textContent = info || '';
+    } else {
+      // DECLINED (faceId null): a large lane monogram, NOT a sad empty hole — visually equal to a face slot.
+      S.el.classList.remove('hasface');
+      S.label.textContent = 'READY';
+      S.note.textContent = 'In the game';
+    }
+  }
+
+  function showSelect() { if (selectEl) selectEl.style.display = 'flex'; }
+  function hideSelect() {
+    if (selectEl) selectEl.style.display = 'none';
+    if (psRowEl) psRowEl.classList.remove('ready');
+  }
+
+  function onSelect(d) {
+    if (d.step === 'open') {
+      // The roster opens the ceremony: hide every other pre-round/idle layer (it owns the moment), build a
+      // slot per lane (all WAITING), and raise the layer.
+      hideLobby(); hideFinal(); hideStage(); hideGetReady(); hideRecordCard(); hideCastLock();
+      hideBeacons();
+      buildSelectRoster((d.lanes && d.lanes.length) ? d.lanes : [0]);
+      if (psFootEl) psFootEl.textContent = '';
+      showSelect();
+    } else if (d.step === 'callup') {
+      // One slot becomes ACTIVE ("you're up"): breathing + walk-up chevron + a framing ring at 0.
+      setSlotState(d.lane || 0, 'active');
+      if (psFootEl) psFootEl.textContent = 'Narrator is calling P' + ((d.lane || 0) + 1) + ' to the floor';
+    } else if (d.step === 'framing') {
+      // The active slot's ring fills with the front-camera framing progress (0..1).
+      var S = psSlots[d.lane || 0];
+      if (S) S.ring.style.setProperty('--pct', Math.max(0, Math.min(1, d.pct || 0)));
+    } else if (d.step === 'lock') {
+      // LOCK: face medallion if a faceId is held, else the lane monogram; info = the READY sub-line.
+      lockSlot(d.lane || 0, d.faceId || null, d.info || '');
+      if (psFootEl) psFootEl.textContent = '';
+    } else if (d.step === 'ready') {
+      // All slots READY — a unison pulse. Any slot that never got an explicit LOCK is locked now as a
+      // monogram (a clean "in the game" card, never a stale active/waiting state). Leave the layer up;
+      // onGetReady / onLoad / a stop hides it.
+      for (var lane in psSlots) {
+        if (psSlots.hasOwnProperty(lane) && !psSlots[lane].el.classList.contains('locked')) lockSlot(+lane, psSlots[lane].faceId, '');
+      }
+      if (psRowEl) { psRowEl.classList.remove('ready'); void psRowEl.offsetWidth; psRowEl.classList.add('ready'); }
+      if (psFootEl) psFootEl.textContent = '';
+    }
   }
 
   // Draw one live skeleton mapped DIRECTLY from [0,1] frame coords into the box, so the dancer's real
@@ -1088,7 +1283,7 @@
   function onLoad(d) {
     clearPendingFeedback();
     recordMode = false; hideRecordCard(); hideCastLock();   // a real routine supersedes a record take / cast lock
-    hideFinal(); clearGuards();
+    hideFinal(); clearGuards(); hideSelect(); clearFaces();   // a new round supersedes any select ceremony + its selfies
     exitVideoMode();
     if (embedEl) { embedEl.style.display = 'none'; embedEl.innerHTML = ''; }
     embedMode = false;
@@ -1115,7 +1310,7 @@
   function onLoadVideo(d) {
     clearPendingFeedback();
     recordMode = false; hideRecordCard(); hideCastLock();   // a real routine supersedes a record take / cast lock
-    hideFinal(); clearGuards();
+    hideFinal(); clearGuards(); hideSelect(); clearFaces();   // a new round supersedes any select ceremony + its selfies
     poseFrames = []; loaded = false; mockMode = false;
     embedMode = false; embedPlaying = false; embedApi = null; embedPlayer = null;
     if (embedEl) { embedEl.style.display = 'none'; embedEl.innerHTML = ''; }
@@ -1154,7 +1349,7 @@
   function onLoadEmbed(d) {
     clearPendingFeedback();
     recordMode = false; hideRecordCard(); hideCastLock();   // a real routine supersedes a record take / cast lock
-    hideFinal(); clearGuards();
+    hideFinal(); clearGuards(); hideSelect(); clearFaces();   // a new round supersedes any select ceremony + its selfies
     exitVideoMode();
     loaded = false; mockMode = false;
     embedMode = true; embedPlaying = false; embedTime = 0; embedApi = null; embedPlayer = null;
@@ -1297,7 +1492,7 @@
       else { audio.pause(); }
     } else if (d.cmd === 'stop') {
       clearPendingFeedback();
-      hideFinal(); clearGuards(); hideStage(); hideGetReady(); hideBeacons();
+      hideFinal(); clearGuards(); hideStage(); hideGetReady(); hideBeacons(); hideSelect(); clearFaces();
       if (embedMode) {
         if (embedApi) { embedApi.pause(); embedApi.seek0(); }
         embedEl.style.display = 'none';
@@ -1331,18 +1526,23 @@
   }
 
   function presentFeedback(d) {
-    toneTier(d.rating, d.gold);
-    // Cast-mode timing cue: a quick directional grace note through the TV speakers when notably off-beat
-    // (early = high, late = low) — the SAME audio channel the phone uses, since the dancer is across the room
-    // from the TV too. Pitched clear of the rating tones (1320/990/660/196) so it reads as a separate cue.
-    if (d.timing === 'early') tone(1568, 0.05, 0.34);
-    else if (d.timing === 'late') tone(392, 0.06, 0.34);
-    // Gentle, brief duck only on the prominent moments so the tone pops — the music stays clearly audible
-    // and never disappears. good/ok/miss don't duck at all (their tone cuts through on its own). The
-    // first ~0.9s after play is suppressed by the ducker itself (settle window — early feedback must
-    // not "take over" before the track establishes).
-    if (d.gold && d.rating !== 'miss') duck(0.7, 0.4);
-    else if (d.rating === 'perfect') duck(0.8, 0.25);
+    // `mute` (multi-player coalescing): show this lane's VISUAL but skip the tone/duck, so a checkpoint with
+    // 4 dancers plays ONE voicing (the phone-picked best moment) instead of four stacked tones burying the
+    // music. The flashes below always run, so every player still sees their own beacon/tile react.
+    if (!d.mute) {
+      toneTier(d.rating, d.gold);
+      // Cast-mode timing cue: a quick directional grace note through the TV speakers when notably off-beat
+      // (early = high, late = low) — the SAME audio channel the phone uses, since the dancer is across the room
+      // from the TV too. Pitched clear of the rating tones (1320/990/660/196) so it reads as a separate cue.
+      if (d.timing === 'early') tone(1568, 0.05, 0.34);
+      else if (d.timing === 'late') tone(392, 0.06, 0.34);
+      // Gentle, brief duck only on the prominent moments so the tone pops — the music stays clearly audible
+      // and never disappears. good/ok/miss don't duck at all (their tone cuts through on its own). The
+      // first ~0.9s after play is suppressed by the ducker itself (settle window — early feedback must
+      // not "take over" before the track establishes).
+      if (d.gold && d.rating !== 'miss') duck(0.7, 0.4);
+      else if (d.rating === 'perfect') duck(0.8, 0.25);
+    }
     // The judged moment lands on the player's BEACON (in the sightline): tier wash + bump + "+N".
     // The filmstrip tile still flashes as the choreography cue (no +N there anymore — one home).
     flashTile(d.idx, d.rating, d.gold);
@@ -1382,9 +1582,14 @@
         case 'go': onGo(d); break;
         case 'record': onRecord(d); break;
         case 'castlock': onCastLock(d); break;
+        case 'select': onSelect(d); break;
         case 'audioInit': onAudioInit(d); break;
         case 'audioChunk': onAudioChunk(d); break;
         case 'audioEnd': onAudioEnd(d); break;
+        case 'faceInit': onFaceInit(d); break;
+        case 'faceChunk': onFaceChunk(d); break;
+        case 'faceEnd': onFaceEnd(d); break;
+        case 'facesClear': clearFaces(); break;
         case 'framing': onFraming(d); break;
         case 'guard': onGuard(d); break;
         case 'dbgpose': onDbgPose(d); break;
@@ -1400,6 +1605,9 @@
       // phone's Cast session stays up (no disconnect event fires), so this `hello` is the ONLY signal it
       // gets that the TV reset and needs re-initialising. The phone ignores it unless a cast round is live
       // (so a normal first connect is harmless); mid-round it ends the round cleanly so a re-tap reloads us.
+      // A fresh boot has no live ceremony, but reset the select layer + selfies defensively so a re-tap
+      // never inherits a stale roster/face (harmless on a true first connect — both are already empty).
+      hideSelect(); clearFaces();
       try { context.sendCustomMessage(NS, e.senderId, { t: 'hello' }); } catch (ex) { /* sender vanished */ }
     });
     context.addEventListener(cast.framework.system.EventType.SENDER_DISCONNECTED, function (e) {
@@ -1517,6 +1725,81 @@
     window.DNTestGuard = function (ring) { onGuard({ lane: 1, state: 'nudge', ring: ring == null ? 0.45 : ring }); };
   }
 
+  // ---- Browser preview of the PLAYER SELECT ceremony (?mock=1&select=1) ----
+  // Drives onSelect through open → callup → framing → lock → ready WITHOUT starting a round, so the layer
+  // (and the final-reveal medallions) can be eyeballed in a tab with no phone. One lane gets a real selfie
+  // pushed through the actual face protocol (onFaceInit/Chunk/End) so the assembler + medallion path runs;
+  // one lane DECLINES (monogram). Console hooks let you re-drive single steps.
+  function mockFaceDataURL(lane) {
+    // Paint a small lane-tinted disc as a stand-in selfie, then read it back as a JPEG data URL.
+    var cv = document.createElement('canvas'); cv.width = 96; cv.height = 96;
+    var c = cv.getContext('2d');
+    c.fillStyle = '#101018'; c.fillRect(0, 0, 96, 96);
+    var g = c.createRadialGradient(48, 38, 6, 48, 48, 54);
+    g.addColorStop(0, '#ffffff'); g.addColorStop(0.5, laneColor(lane)); g.addColorStop(1, '#0e0e16');
+    c.fillStyle = g; c.beginPath(); c.arc(48, 48, 44, 0, 2 * Math.PI); c.fill();
+    c.fillStyle = 'rgba(255,255,255,0.92)'; c.font = '900 40px sans-serif';
+    c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('P' + (lane + 1), 48, 52);
+    return cv.toDataURL('image/jpeg', 0.7);
+  }
+  // Push a data-URL selfie to a faceId through the real chunk protocol (so finalizeFace → faces[id] runs).
+  function mockPushFace(id, lane) {
+    var b64 = mockFaceDataURL(lane).split(',')[1] || '';
+    var bin = atob(b64), total = bin.length, CH = 16 * 1024;     // 16 KB chunks (these JPEGs are well under)
+    var chunks = Math.max(1, Math.ceil(total / CH));
+    onFaceInit({ id: id, mime: 'image/jpeg', total: total, chunks: chunks, chunkBytes: CH });
+    for (var i = 0; i < chunks; i++) {
+      onFaceChunk({ id: id, i: i, d: btoa(bin.slice(i * CH, (i + 1) * CH)) });
+    }
+    onFaceEnd({ id: id });
+  }
+
+  function setupSelectMock() {
+    var lanes = [0, 1, 2];                 // P1 (face), P2 (declines → monogram), P3 (face)
+    var faceFor = { 0: 'mockface-p1', 2: 'mockface-p3' };
+    var infoFor = { 0: 'Pink, stage left', 1: 'Blue, center', 2: 'Green, stage right' };
+    // Pre-load the two selfies so a LOCK with a faceId shows the medallion immediately (the bytes-after-
+    // lock ordering is covered separately by applyFaceToSlots; here we exercise the held-already path).
+    mockPushFace('mockface-p1', 0);
+    mockPushFace('mockface-p3', 2);
+
+    function runCeremony() {
+      onSelect({ t: 'select', step: 'open', lanes: lanes });
+      var step = 0, lane = lanes[0], pct = 0;
+      var iv = setInterval(function () {
+        if (step === 0) { onSelect({ t: 'select', step: 'callup', lane: lane }); pct = 0; step = 1; return; }
+        if (step === 1) {                                   // animate the framing ring fill for the active lane
+          pct += 0.16;
+          onSelect({ t: 'select', step: 'framing', lane: lane, pct: pct });
+          if (pct >= 1) {
+            onSelect({ t: 'select', step: 'lock', lane: lane, faceId: faceFor[lane] || null, info: infoFor[lane] });
+            var idx = lanes.indexOf(lane);
+            if (idx + 1 < lanes.length) { lane = lanes[idx + 1]; step = 0; }   // call up the next dancer
+            else { onSelect({ t: 'select', step: 'ready' }); clearInterval(iv); }
+          }
+          return;
+        }
+      }, 220);
+    }
+    runCeremony();
+
+    // Console hooks for poking single states / re-running, and a faced final reveal to eyeball medallions.
+    window.DNTestSelect = function () { runCeremony(); };
+    window.DNTestSelectOpen = function (n) { onSelect({ t: 'select', step: 'open', lanes: lanes.slice(0, Math.max(1, Math.min(4, n || 3))) }); };
+    window.DNTestSelectCallup = function (l) { onSelect({ t: 'select', step: 'callup', lane: l || 0 }); };
+    window.DNTestSelectFraming = function (l, p) { onSelect({ t: 'select', step: 'framing', lane: l || 0, pct: p == null ? 0.6 : p }); };
+    window.DNTestSelectLock = function (l, withFace) { var id = 'mockface-p' + ((l || 0) + 1); if (withFace !== false) mockPushFace(id, l || 0); onSelect({ t: 'select', step: 'lock', lane: l || 0, faceId: withFace === false ? null : id, info: infoFor[l || 0] || '' }); };
+    window.DNTestSelectReady = function () { onSelect({ t: 'select', step: 'ready' }); };
+    window.DNTestFinalFaces = function () {
+      hideSelect();
+      onFinal({ players: [
+        { lane: 0, total: 2480, stars: 4, faceId: 'mockface-p1' },
+        { lane: 1, total: 3120, stars: 5 },                          // declined → monogram, and the winner
+        { lane: 2, total: 1990, stars: 3, faceId: 'mockface-p3' }
+      ] });
+    };
+  }
+
   // ---- Start ----
   if (context) {
     try {
@@ -1529,7 +1812,9 @@
   }
 
   showLobby();   // idle screen: the install QR until a phone starts a routine
-  if (location.search.indexOf('mock') >= 0) setupMock();
+  // ?mock=1&select=1 → eyeball the PLAYER SELECT ceremony (no round); plain ?mock=1 → the round preview.
+  if (location.search.indexOf('select') >= 0) setupSelectMock();
+  else if (location.search.indexOf('mock') >= 0) setupMock();
   if (location.search.indexOf('debug') >= 0) setDebug(true);   // dev reference-pose overlay (off in production)
 
   requestAnimationFrame(frame);

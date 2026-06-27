@@ -6,11 +6,11 @@
   <title>Floored TV</title>
   <!-- ?v= cache-busts the JS/CSS on the Cast device when this index reloads; bump it (and BUILD in
        receiver.js) on every receiver change so a stale device can't silently serve old code. -->
-  <link rel="preload" href="nunito-vf.woff2?v=jun24-byo4" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="nunito-vf.woff2?v=jun25-select" as="font" type="font/woff2" crossorigin>
   <!-- Shared palette generated from /design-tokens.json (scripts/gen-design-tokens.mjs) — the SAME source
        the Swift app reads. Load before styles.css so its :root tokens resolve. -->
-  <link rel="stylesheet" href="design-tokens.generated.css?v=jun24-byo4">
-  <link rel="stylesheet" href="styles.css?v=jun24-byo4">
+  <link rel="stylesheet" href="design-tokens.generated.css?v=jun25-select">
+  <link rel="stylesheet" href="styles.css?v=jun25-select">
   <!-- Google Cast Application Framework (CAF) receiver SDK -->
   <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
 </head>
@@ -57,6 +57,19 @@
 
   <!-- Big final-score reveal at the end of a cast round (exact total, in sync with the phone). -->
   <div id="final" class="final"><div class="final-title">FINAL</div><div class="final-scores"></div></div>
+
+  <!-- PLAYER SELECT: the multiplayer pre-round "character select" ceremony, one slot card per lane
+       (P1..P4), each walking through WAITING → ACTIVE (you're up, front-camera framing) → LOCKED/READY,
+       with the player's selfie (streamed phone→TV, like the BYO audio) or a lane monogram. The roster row
+       is built per ceremony in JS (receiver.js → onSelect). -->
+  <div id="playerselect">
+    <div class="ps-head">
+      <div class="ps-title">PLAYER SELECT</div>
+      <div class="ps-sub">Your crew, in the game</div>
+    </div>
+    <div class="ps-row"></div>
+    <div class="ps-foot"></div>
+  </div>
 
   <!-- "Get Ready" countdown on the TV (5..1, GO!). -->
   <div id="getready" class="getready"><div class="gr-num"></div></div>
@@ -110,9 +123,9 @@
   <div id="build" style="position:fixed; right:10px; bottom:8px; font:11px/1 monospace; opacity:0.4; color:#fff; z-index:9;"></div>
 
   <!-- Audio-mix policies (ducking + sync guard) — unit-tested in receiver/test/; must load first. -->
-  <script src="audio-mix.js?v=jun24-byo4"></script>
+  <script src="audio-mix.js?v=jun25-select"></script>
   <!-- window.FlooredTokens (shared palette) — generated from /design-tokens.json; must precede receiver.js. -->
-  <script src="design-tokens.generated.js?v=jun24-byo4"></script>
-  <script src="receiver.js?v=jun24-byo4"></script>
+  <script src="design-tokens.generated.js?v=jun25-select"></script>
+  <script src="receiver.js?v=jun25-select"></script>
 </body>
 </html>
