@@ -84,7 +84,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun25-select';
+  var BUILD = 'jun27-byovideo';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -1338,7 +1338,11 @@
       document.body.classList.remove('playing');
       broadcast({ t: 'ph', rt: videoEl.duration || 0, ts: now(), st: 'ended', seq: seq++ });
     };
-    if (d.audioUrl) { audio.src = d.audioUrl; audio.load(); } else { audio.removeAttribute('src'); }
+    // BYO music: play the clip we already hold as a streamed Blob (phone→TV, never our server); else the
+    // catalog mp3 URL. The video stays muted (set above) — this is only its synced soundtrack. Mirrors onLoad.
+    if (d.audioBlobId && byoAudioURL && lastAudioBlobID === d.audioBlobId) { audio.src = byoAudioURL; audio.load(); }
+    else if (d.audioUrl) { audio.src = d.audioUrl; audio.load(); }
+    else { audio.removeAttribute('src'); }
     videoEl.src = d.videoUrl || '';
     videoEl.load();
     resumeAudio();
