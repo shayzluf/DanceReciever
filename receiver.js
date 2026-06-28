@@ -84,7 +84,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun28-vidsurface';
+  var BUILD = 'jun28-loadlobby';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -142,6 +142,11 @@
   var byoLobbyStatus = null;   // {text, ok} override while a BYO track is streaming/ready (Phase 4); null = default
   function updateLobbyStatus() {
     if (!lobbyStatusEl) return;
+    if (loadingLobbyText) {   // a routine is LOADING → the caster cue wins over the idle / BYO-music lines
+      lobbyStatusEl.textContent = loadingLobbyText.text;
+      lobbyStatusEl.classList.toggle('ok', !!loadingLobbyText.ok);
+      return;
+    }
     if (byoLobbyStatus) {   // mirror the phone's "sending your music" / "ready" cue on the TV the music plays from
       lobbyStatusEl.textContent = byoLobbyStatus.text;
       lobbyStatusEl.classList.toggle('ok', byoLobbyStatus.ok);
@@ -153,8 +158,40 @@
       : 'Dancing? Open Floored on your phone and tap the Cast button';
     lobbyStatusEl.classList.toggle('ok', connected);
   }
-  function showLobby() { updateLobbyStatus(); if (lobbyEl) lobbyEl.style.display = 'flex'; }
+  function showLobby() { updateLobbyStatus(); if (lobbyEl) { lobbyEl.style.opacity = ''; lobbyEl.style.transition = ''; lobbyEl.style.display = 'flex'; } }
   function hideLobby() { if (lobbyEl) lobbyEl.style.display = 'none'; }
+
+  // ---- Loading / ready handoff (UI Designer state-map, jun28). The dark #videostage IS the dance; loading on
+  // it reads as "started" when it hasn't. So a routine LOAD keeps the lobby (QR) up — the stage waits hidden
+  // beneath it (z2 < lobby z9) — and we cross-fade to the stage only at the READY moment (figure: song canplay
+  // AND poses in; video: clip canplay; embed: provider ready). A watchdog turns an unrecoverable load into a
+  // clear caster message instead of an endless spinner over a black screen.
+  var KEEP_LOBBY = { load: 1, loadVideo: 1, loadEmbed: 1, pose: 1, moves: 1, audioInit: 1, audioChunk: 1, audioEnd: 1, getready: 1 };
+  var stageRevealed = false, loadWatchdog = null, loadingLobbyText = null, figureAudioReady = false;
+  function clearLoadWatchdog() { if (loadWatchdog) { clearTimeout(loadWatchdog); loadWatchdog = null; } }
+  function armLoad() {
+    stageRevealed = false; figureAudioReady = false;
+    loadingLobbyText = { text: 'Loading your routine…', ok: false };
+    showLobby();   // keep/raise the lobby over the prepared-but-not-yet-ready stage
+    clearLoadWatchdog();
+    loadWatchdog = setTimeout(function () {
+      if (stageRevealed) return;   // never reached canplay (dead clip URL, blocked embed) → recoverable, not a black hang
+      loadingLobbyText = { text: "Couldn't load that one, try again from your phone", ok: false };
+      updateLobbyStatus();
+    }, 9000);
+  }
+  function revealStage() {
+    if (stageRevealed) return;
+    stageRevealed = true; clearLoadWatchdog(); loadingLobbyText = null;
+    if (lobbyEl) {   // cross-fade the lobby out → the already-painted stage shows beneath, no flash
+      lobbyEl.style.transition = 'opacity 0.28s ease';
+      lobbyEl.style.opacity = '0';
+      setTimeout(function () {
+        if (stageRevealed && lobbyEl) { lobbyEl.style.display = 'none'; lobbyEl.style.opacity = ''; lobbyEl.style.transition = ''; }
+      }, 300);
+    }
+  }
+  function tryRevealFigure() { if (loaded && figureAudioReady) revealStage(); }
   // Browser-preview hook: fake N connected phones and refresh the lobby line (no Cast SDK in a tab).
   window.DNTestLobbySenders = function (n) {
     senders = {};
@@ -803,6 +840,7 @@
   }
   function onGo() {
     if (recordMode) { showRecordCard(); if (recordEl) recordEl.classList.remove('counting'); }   // fade in REC + direction for the take
+    else revealStage();   // a real round is starting → ensure the stage is shown (backstop if canplay/ready never fired)
     var num = getreadyEl ? getreadyEl.querySelector('.gr-num') : null;
     if (num) num.textContent = 'GO!';
     tone(784, 0.1, 0.5);
@@ -1297,10 +1335,14 @@
     resetMoves(d);
     setMode('figure');
     applyOrientation('portrait');   // the drawn coach is a tall standing figure → portrait stage + side rail
+    armLoad();   // keep the lobby up; reveal the figure when the song can play AND the poses are in
     // BYO music: play the clip we already hold as a Blob (streamed phone→TV); else the catalog mp3 URL.
-    if (d.audioBlobId && byoAudioURL && lastAudioBlobID === d.audioBlobId) { audio.src = byoAudioURL; audio.load(); }
-    else if (d.audioUrl) { audio.src = d.audioUrl; audio.load(); }
+    var hasAudio = false;
+    if (d.audioBlobId && byoAudioURL && lastAudioBlobID === d.audioBlobId) { audio.src = byoAudioURL; audio.load(); hasAudio = true; }
+    else if (d.audioUrl) { audio.src = d.audioUrl; audio.load(); hasAudio = true; }
     resumeAudio();
+    if (hasAudio) audio.addEventListener('canplay', function () { figureAudioReady = true; tryRevealFigure(); }, { once: true });
+    else { figureAudioReady = true; tryRevealFigure(); }   // no music to wait on (empty routine) → poses alone
     setStatus('loading routine…');
   }
 
@@ -1333,6 +1375,7 @@
     embedMode = false; embedPlaying = false; embedApi = null; embedPlayer = null;
     if (embedEl) { embedEl.style.display = 'none'; embedEl.innerHTML = ''; }
     mirrored = d.mirrored !== false;
+    armLoad();   // keep the lobby up; reveal when the clip can play (canplay listener below)
     videoEl = recreateCastVideo();   // fresh hardware surface each round — reused Cast surfaces don't reliably re-composite after hide
     canvas.style.display = 'none';
     videoMode = true; videoPlaying = false;
@@ -1363,6 +1406,7 @@
     else { audio.removeAttribute('src'); }
     videoEl.src = d.videoUrl || '';
     videoEl.load();
+    videoEl.addEventListener('canplay', revealStage, { once: true });   // ready → cross-fade lobby out, show the clip
     resumeAudio();
     setStatus('loading video…');
   }
@@ -1375,6 +1419,7 @@
     exitVideoMode();
     loaded = false; mockMode = false;
     embedMode = true; embedPlaying = false; embedTime = 0; embedApi = null; embedPlayer = null;
+    armLoad();   // keep the lobby up; reveal when the provider reports ready (callbacks below)
     canvas.style.display = 'none';
     if (!embedEl) embedEl = document.getElementById('embed');
     embedEl.innerHTML = '';
@@ -1401,7 +1446,7 @@
         width: '100%', height: '100%', videoId: id,
         playerVars: { autoplay: 1, controls: 0, playsinline: 1, rel: 0, fs: 0, modestbranding: 1 },
         events: {
-          onReady: function (e) { try { e.target.playVideo(); } catch (x) {} embedPlaying = true; setStatus(''); },
+          onReady: function (e) { try { e.target.playVideo(); } catch (x) {} embedPlaying = true; setStatus(''); revealStage(); },
           onStateChange: function (e) { embedPlaying = (e.data === 1); if (e.data === 0) broadcast({ t: 'ended' }); }
         }
       });
@@ -1434,7 +1479,7 @@
       embedPlayer.on('play', function () { embedPlaying = true; });
       embedPlayer.on('pause', function () { embedPlaying = false; });
       embedPlayer.on('ended', function () { broadcast({ t: 'ended' }); });
-      embedPlayer.ready().then(function () { embedPlayer.play().catch(function () {}); setStatus(''); });
+      embedPlayer.ready().then(function () { embedPlayer.play().catch(function () {}); setStatus(''); revealStage(); });
     }
     if (window.Vimeo && window.Vimeo.Player) init();
     else { var tag = document.createElement('script'); tag.src = 'https://player.vimeo.com/api/player.js'; tag.onload = init; document.head.appendChild(tag); }
@@ -1453,7 +1498,7 @@
       if (dd.type === 'onCurrentTime' && dd.value) { embedTime = dd.value.currentTime; embedPlaying = true; }
       if (dd.type === 'onStateChange') { embedPlaying = (dd.value === 1); if (dd.value === 0) broadcast({ t: 'ended' }); }
     });
-    ifr.addEventListener('load', function () { post({ type: 'play' }); setStatus(''); });
+    ifr.addEventListener('load', function () { post({ type: 'play' }); setStatus(''); revealStage(); });
     embedApi = {
       time: function () { return embedTime; },
       play: function () { post({ type: 'play' }); },
@@ -1472,6 +1517,7 @@
       loaded = true;
       setStatus('ready');
       broadcast({ t: 'ready' });
+      tryRevealFigure();   // poses in → reveal once the song can play too (figure handoff)
     }
   }
 
@@ -1588,7 +1634,9 @@
     context.addCustomMessageListener(NS, function (event) {
       var d = event.data || {};
       senders[event.senderId] = true;
-      if (d.t && d.t !== 'ping' && d.t !== 'pong') hideLobby();   // any routine activity → drop the idle QR
+      // Drop the idle QR for screen-OWNING states, but NOT for the load/stream/countdown flow — those keep the
+      // lobby up until the stage is actually ready (revealStage cross-fades it out then).
+      if (d.t && d.t !== 'ping' && d.t !== 'pong' && !KEEP_LOBBY[d.t]) hideLobby();
       switch (d.t) {
         case 'ping': try { context.sendCustomMessage(NS, event.senderId, { t: 'pong', id: d.id, cs: d.cs, rs: now() }); } catch (e) {} break;
         case 'load': onLoad(d); break;
@@ -1742,6 +1790,10 @@
     };
     window.DNTestGetReady = function (n) { onGetReady({ n: n == null ? 3 : n }); };
     window.DNTestGo = function () { onGo(); };
+    // Load-on-lobby handoff: DNTestLoadFigure raises the lobby with "Loading your routine…"; DNTestFigureReady
+    // completes the poses → with no audio to wait on, that crosses the ready gate and the lobby fades to stage.
+    window.DNTestLoadFigure = function () { onLoad({ chunks: 1, mirrored: true }); };
+    window.DNTestFigureReady = function () { onPose({ frames: [{ t: 0, j: standingJoints(0.4) }] }); };
     window.DNTestFraming = function (instr, ok) { onFraming({ state: 'setup', instr: instr || 'Back up — I need to see your feet', players: [{ lane: 0, ok: !!ok, j: standingJoints(0.3) }] }); };
     window.DNTestPaused = function () { onFraming({ state: 'paused', instr: 'Step back into view', players: [{ lane: 0, ok: false, j: standingJoints(0.3) }] }); };
     window.DNTestGuard = function (ring) { onGuard({ lane: 1, state: 'nudge', ring: ring == null ? 0.45 : ring }); };
