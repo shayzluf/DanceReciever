@@ -84,7 +84,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun27-byovideo';
+  var BUILD = 'jun28-vidsurface';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -1304,6 +1304,24 @@
     setStatus('loading routine…');
   }
 
+  // Cast hardware-surface reset. The <video> composites on a HARDWARE surface (above all HTML). Once that
+  // surface is hidden (onFinal sets display:none so the score reveal shows) and the SAME element is reused
+  // next round, the Chromecast frequently fails to re-composite it — the element is present, display:block,
+  // correct src, but paints NOTHING ("video the first round, blank after; only disconnect/reconnect fixed
+  // it"). Reconnect cured it because it rebuilds the page. So rebuild just the <video>: a brand-new element
+  // gets a brand-new surface, every video round. (Mirror/listeners/display are re-applied by onLoadVideo.)
+  function recreateCastVideo() {
+    var old = document.getElementById('castvideo');
+    var fresh = document.createElement('video');
+    fresh.id = 'castvideo';
+    fresh.muted = true;
+    fresh.setAttribute('playsinline', '');
+    fresh.setAttribute('webkit-playsinline', '');
+    if (old && old.parentNode) old.parentNode.replaceChild(fresh, old);
+    else { var stage = document.getElementById('videostage'); if (stage) stage.appendChild(fresh); }
+    return fresh;
+  }
+
   // Local catalog routine on the TV: play the user's *silent* recorded clip (staged on R2) as the coach,
   // with the licensed catalog mp3 synced to it. Video is the master clock; play/pause/stop drive both.
   // Our own content → feedback overlays are allowed (presentFeedback only suppresses them for embeds).
@@ -1315,7 +1333,7 @@
     embedMode = false; embedPlaying = false; embedApi = null; embedPlayer = null;
     if (embedEl) { embedEl.style.display = 'none'; embedEl.innerHTML = ''; }
     mirrored = d.mirrored !== false;
-    if (!videoEl) videoEl = document.getElementById('castvideo');
+    videoEl = recreateCastVideo();   // fresh hardware surface each round — reused Cast surfaces don't reliably re-composite after hide
     canvas.style.display = 'none';
     videoMode = true; videoPlaying = false;
     syncGuard.reset();   // new round → may correct again right after its own settle window
