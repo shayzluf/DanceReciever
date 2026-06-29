@@ -640,6 +640,27 @@ body.playing .hud { opacity: 0; transition: opacity 0.6s ease; }
   text-shadow: 0 0 1.6vh var(--lcglow, transparent); display: none;
 }
 .ps-well .chev::before { content: "\2304\A\2304"; white-space: pre; display: block; text-align: center; }
+/* Photobooth countdown numeral inside the active well (3,2,1) — same brand gradient as the dance getready
+   count, scaled to the well. Pops per beat (re-triggered from JS); shown via display:flex while counting. */
+.ps-well .count {
+  position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+  font-size: 11vh; font-weight: 900; line-height: 1; font-variant-numeric: tabular-nums;
+  background: linear-gradient(92deg, var(--pink), var(--blue) 70%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  filter: drop-shadow(0 0 1.8vh rgba(255, 92, 168, 0.6));
+  animation: pscount 0.34s ease-out;
+}
+@keyframes pscount { from { transform: scale(1.4); opacity: 0.2; } to { transform: scale(1); opacity: 1; } }
+/* While counting, the walk-up chevron AND the lane monogram hide (the numeral takes the well); the framing
+   ring stays full as a frame. */
+.ps-slot.active.counting .ps-well .chev { display: none; }
+.ps-slot.counting .ps-well .mono { display: none; }
+/* Shutter: a white flash fills the well the instant the still is grabbed (the camera-click). */
+.ps-well.flash::after {
+  content: ""; position: absolute; inset: -0.4vh; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.92); animation: psflash 0.34s ease-out forwards; pointer-events: none;
+}
+@keyframes psflash { from { opacity: 0.92; } to { opacity: 0; } }
 /* A rotated "LOCKED" chip pinned at the well bottom — shown only on a LOCKED slot. */
 .ps-well .chip {
   position: absolute; left: 50%; bottom: -1.4vh; transform: translateX(-50%) rotate(-7deg);

@@ -84,7 +84,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun28-loadlobby';
+  var BUILD = 'jun29-photobooth';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -1061,6 +1061,8 @@
   function lockSlot(lane, faceId, info) {
     var S = psSlots[lane]; if (!S) return;
     S.faceId = faceId || null;
+    S.el.classList.remove('counting');                                    // clear any countdown state
+    var nl = S.well.querySelector('.count'); if (nl) nl.style.display = 'none';
     setSlotState(lane, 'locked');
     var url = (faceId && faces[faceId]) ? faces[faceId] : null;
     if (url) {
@@ -1102,9 +1104,36 @@
       setSlotState(d.lane || 0, 'active');
       if (psFootEl) psFootEl.textContent = 'Narrator is calling P' + ((d.lane || 0) + 1) + ' to the floor';
     } else if (d.step === 'framing') {
-      // The active slot's ring fills with the front-camera framing progress (0..1).
+      // The active slot's ring fills with the front-camera framing progress (0..1). A framing message also
+      // means "acquiring" or "reset", so clear any countdown numeral → a mid-count reset drops cleanly back.
       var S = psSlots[d.lane || 0];
-      if (S) S.ring.style.setProperty('--pct', Math.max(0, Math.min(1, d.pct || 0)));
+      if (S) {
+        S.ring.style.setProperty('--pct', Math.max(0, Math.min(1, d.pct || 0)));
+        var nf = S.well.querySelector('.count'); if (nf) nf.style.display = 'none';
+        S.el.classList.remove('counting');
+      }
+    } else if (d.step === 'count') {
+      // Photobooth countdown: pop the numeral inside the active well + the per-beat tone (the exact getready
+      // beat — bright on the last). The chevron hides (you're already up); the ring stays full as the frame.
+      var Sc = psSlots[d.lane || 0];
+      if (Sc) {
+        Sc.el.classList.add('counting');
+        var nc = Sc.well.querySelector('.count');
+        if (!nc) { nc = document.createElement('div'); nc.className = 'count'; Sc.well.appendChild(nc); }
+        nc.textContent = String(d.n);
+        nc.style.display = 'flex';
+        nc.style.animation = 'none'; void nc.offsetWidth; nc.style.animation = '';   // re-fire the pop each beat
+        tone((d.n || 0) <= 1 ? 1320 : 660, 0.09, 0.4);
+      }
+    } else if (d.step === 'shutter') {
+      // The grab instant: a white well-flash + a "tk-tk" camera-click; the lock medallion drops right after.
+      var Ss = psSlots[d.lane || 0];
+      if (Ss) {
+        var ns = Ss.well.querySelector('.count'); if (ns) ns.style.display = 'none';
+        Ss.well.classList.remove('flash'); void Ss.well.offsetWidth; Ss.well.classList.add('flash');
+        setTimeout(function () { if (Ss && Ss.well) Ss.well.classList.remove('flash'); }, 340);
+        tone(2200, 0.012, 0.5); setTimeout(function () { tone(1400, 0.03, 0.35); }, 18);
+      }
     } else if (d.step === 'lock') {
       // LOCK: face medallion if a faceId is held, else the lane monogram; info = the READY sub-line.
       lockSlot(d.lane || 0, d.faceId || null, d.info || '');
@@ -1863,6 +1892,8 @@
     window.DNTestSelectCallup = function (l) { onSelect({ t: 'select', step: 'callup', lane: l || 0 }); };
     window.DNTestSelectFraming = function (l, p) { onSelect({ t: 'select', step: 'framing', lane: l || 0, pct: p == null ? 0.6 : p }); };
     window.DNTestSelectLock = function (l, withFace) { var id = 'mockface-p' + ((l || 0) + 1); if (withFace !== false) mockPushFace(id, l || 0); onSelect({ t: 'select', step: 'lock', lane: l || 0, faceId: withFace === false ? null : id, info: infoFor[l || 0] || '' }); };
+    window.DNTestSelectCount = function (l, n) { onSelect({ t: 'select', step: 'count', lane: l || 0, n: n == null ? 3 : n }); };
+    window.DNTestSelectShutter = function (l) { onSelect({ t: 'select', step: 'shutter', lane: l || 0 }); };
     window.DNTestSelectReady = function () { onSelect({ t: 'select', step: 'ready' }); };
     window.DNTestFinalFaces = function () {
       hideSelect();
