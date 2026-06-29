@@ -84,7 +84,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun29-lobbycue';
+  var BUILD = 'jun29-vidsync';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -1300,7 +1300,9 @@
     // audible corrections) live in syncGuard — see its creation above for the seek-storm history.
     if (videoMode && videoEl && audio) {
       var seekTo = syncGuard.check({
-        enabled: !videoEl.paused && !audio.paused,
+        // Don't re-seek the audio back to a video stuck at 0 (a cold Cast <video> surface that never advanced):
+        // that's what looped a few seconds of music. Only sync once the clip has really started → else play through.
+        enabled: !videoEl.paused && !audio.paused && (videoEl.currentTime || 0) > 0.1,
         sincePlay: now() - playStartedAt,
         audioTime: audio.currentTime || 0,
         videoTime: videoEl.currentTime || 0,
