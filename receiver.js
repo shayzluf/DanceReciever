@@ -84,7 +84,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun29-photobooth';
+  var BUILD = 'jun29-lobbycue';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -160,13 +160,16 @@
   }
   function showLobby() { updateLobbyStatus(); if (lobbyEl) { lobbyEl.style.opacity = ''; lobbyEl.style.transition = ''; lobbyEl.style.display = 'flex'; } }
   function hideLobby() { if (lobbyEl) lobbyEl.style.display = 'none'; }
+  // Phone-driven BYO lobby cue: the phone knows whether a routine is recorded, the receiver does not, so it
+  // OVERRIDES the receiver's own streaming/ready text (e.g. "Record your routine" before there's a routine).
+  function onLobby(d) { byoLobbyStatus = { text: d.text || '', ok: !!d.ok }; updateLobbyStatus(); }
 
   // ---- Loading / ready handoff (UI Designer state-map, jun28). The dark #videostage IS the dance; loading on
   // it reads as "started" when it hasn't. So a routine LOAD keeps the lobby (QR) up — the stage waits hidden
   // beneath it (z2 < lobby z9) — and we cross-fade to the stage only at the READY moment (figure: song canplay
   // AND poses in; video: clip canplay; embed: provider ready). A watchdog turns an unrecoverable load into a
   // clear caster message instead of an endless spinner over a black screen.
-  var KEEP_LOBBY = { load: 1, loadVideo: 1, loadEmbed: 1, pose: 1, moves: 1, audioInit: 1, audioChunk: 1, audioEnd: 1, getready: 1 };
+  var KEEP_LOBBY = { load: 1, loadVideo: 1, loadEmbed: 1, pose: 1, moves: 1, audioInit: 1, audioChunk: 1, audioEnd: 1, getready: 1, lobby: 1 };
   var stageRevealed = false, loadWatchdog = null, loadingLobbyText = null, figureAudioReady = false;
   function clearLoadWatchdog() { if (loadWatchdog) { clearTimeout(loadWatchdog); loadWatchdog = null; } }
   function armLoad() {
@@ -898,7 +901,7 @@
   function onAudioInit(d) {
     if (d.id && d.id === lastAudioBlobID && byoAudioURL) {   // dedup: we already hold this exact clip
       broadcast({ t: 'audioAck', id: d.id, have: 'all' });
-      byoLobbyStatus = { text: 'Your music is ready, tap Dance', ok: true }; updateLobbyStatus();
+      byoLobbyStatus = { text: 'Your music is ready', ok: true }; updateLobbyStatus();   // phone refines the CTA (record vs tap Dance)
       return;
     }
     if ((d.total || 0) > CAST_AUDIO_MAX) {   // too big to hold as a Blob → reject; the phone falls back to phone-only
@@ -933,7 +936,7 @@
     lastAudioBlobID = byoID; byoBuf = null;
     broadcast({ t: 'audioAck', id: lastAudioBlobID, have: 'all' });
     setStatus('BYO audio ready (' + blob.size + ' bytes)');
-    byoLobbyStatus = { text: 'Your music is ready, tap Dance', ok: true }; updateLobbyStatus();
+    byoLobbyStatus = { text: 'Your music is ready', ok: true }; updateLobbyStatus();   // phone refines the CTA (record vs tap Dance)
     // The clip is held as a Blob now; a BYO cast round plays it via onLoad's `audioBlobId` branch (it does
     // NOT auto-play here — that would sound before the round starts).
   }
@@ -1680,6 +1683,7 @@
         case 'getready': onGetReady(d); break;
         case 'go': onGo(d); break;
         case 'record': onRecord(d); break;
+        case 'lobby': onLobby(d); break;
         case 'castlock': onCastLock(d); break;
         case 'select': onSelect(d); break;
         case 'audioInit': onAudioInit(d); break;
@@ -1894,6 +1898,7 @@
     window.DNTestSelectLock = function (l, withFace) { var id = 'mockface-p' + ((l || 0) + 1); if (withFace !== false) mockPushFace(id, l || 0); onSelect({ t: 'select', step: 'lock', lane: l || 0, faceId: withFace === false ? null : id, info: infoFor[l || 0] || '' }); };
     window.DNTestSelectCount = function (l, n) { onSelect({ t: 'select', step: 'count', lane: l || 0, n: n == null ? 3 : n }); };
     window.DNTestSelectShutter = function (l) { onSelect({ t: 'select', step: 'shutter', lane: l || 0 }); };
+    window.DNTestLobby = function (text, ok) { onLobby({ text: text || 'Your music is ready. Record your routine.', ok: !!ok }); };
     window.DNTestSelectReady = function () { onSelect({ t: 'select', step: 'ready' }); };
     window.DNTestFinalFaces = function () {
       hideSelect();
