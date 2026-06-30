@@ -84,7 +84,7 @@
 
   // Build stamp — bump this (and the ?v= in index.html) on every receiver change. The TV shows it
   // bottom-right, so a stale/cached Cast device is detectable at a glance (wrong/missing = reboot it).
-  var BUILD = 'jun29-vidsync';
+  var BUILD = 'jun30-lanesort';
   var buildEl = document.getElementById('build');
   if (buildEl) buildEl.textContent = 'build ' + BUILD;
 
@@ -751,6 +751,10 @@
     if (!finalEl) return;
     var wrap = finalEl.querySelector('.final-scores');
     players = players || [];
+    // TV layout is canonical by LANE (left→right = lane order, matching the floor, the beacons, and the
+    // player-select roster) — NOT the order the phone sent (it ranks finals by score). Sort a copy by lane
+    // so card POSITION tracks the lane; the winner glow is still computed from top total below.
+    players = players.slice().sort(function (a, b) { return (a.lane || 0) - (b.lane || 0); });
     var count = Math.max(1, players.length);
     // Winner (top total) gets a gold-warmed glow — only when there's more than one player.
     var winLane = -1, winTotal = -1;
@@ -998,6 +1002,10 @@
 
   function buildSelectRoster(lanes) {
     if (!psRowEl) return;
+    // Roster is canonical by LANE (left→right, matching the floor + beacons + final reveal). The phone's
+    // join set can arrive in any order (dict/Set iteration), which made the booth slots "sometimes" wrong —
+    // sort a copy ascending so slot POSITION always tracks the lane.
+    lanes = (lanes || []).slice().sort(function (a, b) { return a - b; });
     psSlots = {};
     psRowEl.innerHTML = '';
     psRowEl.className = 'ps-row n' + Math.min(4, Math.max(1, lanes.length));
